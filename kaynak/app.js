@@ -2646,7 +2646,7 @@ function renderPasteRestoreModal() {
 }
 function renderRestoreModal() {
   const pr = state.pendingRestore;
-  const overlay = h('div', { style: { position: 'fixed', inset: '0', background: 'rgba(43,42,40,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', zIndex: '50' } });
+  const overlay = h('div', { style: { position: 'fixed', inset: '0', background: 'rgba(43,42,40,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', zIndex: '70' } });
   const box = h('div', { style: { background: 'var(--cream)', borderRadius: '8px', padding: '22px', maxWidth: '340px', width: '100%', border: '1.5px solid var(--line)' } });
   box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', color: 'var(--stamp)' } }, [ic('warn', 18), h('span', { style: { fontFamily: "'Inter',sans-serif", fontWeight: '600', fontSize: '16px', textTransform: 'uppercase' } }, 'Yedeği Geri Yükle')]));
   box.appendChild(h('p', { style: { fontSize: '13.5px', lineHeight: '1.5', marginBottom: '8px' }, html: '<strong>' + pr.source + '</strong> dosyasından <strong>' + pr.list.length + ' kayıt</strong> bulundu. Bu işlem, cihazdaki tüm verilerin üzerine yazacak ve geri alınamaz.' }));
