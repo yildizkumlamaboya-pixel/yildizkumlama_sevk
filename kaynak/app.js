@@ -1100,7 +1100,7 @@ async function runFullBackup() {
 }
 
 /* ============================== otomatik günlük yedek (cihaz içi) ============================== */
-const AUTOBACKUP_KEEP = 7;
+const AUTOBACKUP_KEEP = 5;
 function autoBackupEnabled() { try { return localStorage.getItem('sevkiyat_autobackup') !== '0'; } catch (e) { return true; } }
 function abOpen() {
   return new Promise((resolve, reject) => {
@@ -1193,7 +1193,7 @@ function buildAutoBackupBox(container) {
   ]));
   const tg = h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12.5px', color: 'var(--inkSoft)', marginBottom: '8px' } });
   tg.appendChild(h('input', { type: 'checkbox', checked: on, style: { width: '16px', height: '16px', cursor: 'pointer' }, onchange: (e) => { try { localStorage.setItem('sevkiyat_autobackup', e.target.checked ? '1' : '0'); } catch (err) {} if (e.target.checked) maybeDailyAutoBackup(); render(); } }));
-  tg.appendChild(h('span', {}, 'Uygulama günde bir kez kendiliğinden yedek alsın (son ' + AUTOBACKUP_KEEP + ' gün cihazda tutulur)'));
+  tg.appendChild(h('span', {}, 'Uygulama günde bir kez kendiliğinden yedek alsın (son ' + AUTOBACKUP_KEEP + ' yedek cihazda tutulur)'));
   box.appendChild(tg);
   const row = h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' } });
   row.appendChild(btn([ic('check', 13), state.autoBackupBusy ? ' Alınıyor…' : ' Şimdi Otomatik Yedek Al'], {
@@ -1203,7 +1203,8 @@ function buildAutoBackupBox(container) {
   }, 'var(--ink)', 'var(--cream)'));
   box.appendChild(row);
   if (state.autoBackupError) box.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--stamp)', marginBottom: '6px' } }, state.autoBackupError));
-  const list = state.autoBackups || [];
+  const all = state.autoBackups || [];
+  const list = all.filter((r) => r.day !== 'geri-yukleme-oncesi').slice(0, AUTOBACKUP_KEEP).concat(all.filter((r) => r.day === 'geri-yukleme-oncesi'));
   if (!list.length) {
     box.appendChild(h('div', { style: { fontSize: '11.5px', color: 'var(--inkSoft)' } }, 'Henüz otomatik yedek yok. Bugünkü yedek uygulama açıkken kendiliğinden alınır.'));
   } else {
@@ -2085,7 +2086,6 @@ function buildBackupPanelContent(container) {
     container.appendChild(cloudBox);
 
     buildAutoBackupBox(container);
-    container.appendChild(renderStorageBar());
     const rangeRow = h('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px' } });
     rangeRow.appendChild(h('div', { style: { flex: '1' } }, [
       h('label', { style: { display: 'block', fontSize: '10px', fontWeight: '600', color: 'var(--steel)', marginBottom: '3px', textTransform: 'uppercase' } }, 'Yedek Başlangıç (ops.)'),
@@ -2157,8 +2157,6 @@ function buildBackupPanelContent(container) {
     }
     secBox.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--inkSoft)', lineHeight: '1.5' } }, 'PIN, telefonu eline alan kişiyi uygulamayı açarken durdurur. Veriler şifrelenmez; yedek dosyası PIN ile korunmaz.'));
     container.appendChild(secBox);
-    container.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--inkSoft)', lineHeight: '1.5', marginBottom: '8px', background: 'var(--paper2)', borderRadius: '8px', padding: '8px 10px' } },
-      'Tam yedek (JSON): tüm sevkiyatlar, fotoğraflar, imzalar, maliyet bilgileri, teklifler, çöp kutusu ve ayarlar tek dosyada. Cihaz destekliyorsa "Farklı Kaydet" penceresi açılır, desteklemiyorsa paylaşım menüsü (Gmail, Dosyalar vb.) çıkar.'));
 }
 function renderBackupMenu() {
   const overlay = h('div', { style: { position: 'fixed', inset: '0', zIndex: '50' }, onclick: () => { state.uiExpanded.backup = false; render(); } });
