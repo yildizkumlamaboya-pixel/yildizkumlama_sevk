@@ -1119,13 +1119,66 @@ function abTx(mode, fn) {
     tx.onabort = () => { db.close(); reject(tx.error || new Error('abort')); };
   }));
 }
-async function abList() {
+async function abLocalList() {
   const all = await abTx('readonly', (st) => st.getAll());
-  return (all || []).map((r) => ({ day: r.day, at: r.at, shipments: r.shipments, quotes: r.quotes, size: r.size })).sort((a, b) => (b.at || 0) - (a.at || 0));
+  return (all || []).map((r) => ({ day: r.day, at: r.at, shipments: r.shipments, quotes: r.quotes, size: r.size, src: 'local' }));
 }
-async function abGet(day) { return abTx('readonly', (st) => st.get(day)); }
-async function abPut(rec) { return abTx('readwrite', (st) => st.put(rec)); }
-async function abDelete(day) { return abTx('readwrite', (st) => st.delete(day)); }
+const AB_BUCKET = 'yedekler', AB_DIR = 'otomatik';
+function abCloudParse(f) {
+  const m = /^(.+?)__(\d+)_(\d+)\.json$/.exec(f.name || '');
+  if (!m) return null;
+  return { day: m[1], at: Date.parse(f.updated_at || f.created_at) || 0, shipments: Number(m[2]), quotes: Number(m[3]), size: (f.metadata && f.metadata.size) || 0, src: 'cloud', file: f.name };
+}
+async function abCloudList() {
+  const { data, error } = await supabaseClient.storage.from(AB_BUCKET).list(AB_DIR, { limit: 100 });
+  if (error) throw error;
+  return (data || []).map(abCloudParse).filter(Boolean);
+}
+async function abList() {
+  let cloud = [], local = [];
+  if (supabaseClient) { try { cloud = await abCloudList(); } catch (e) { state.autoBackupError = 'Buluttaki yedekler okunamadı: ' + (e && e.message ? e.message : String(e)); } }
+  try { local = await abLocalList(); } catch (e) {}
+  const days = new Set(cloud.map((r) => r.day));
+  return cloud.concat(local.filter((r) => !days.has(r.day))).sort((a, b) => String(b.day).localeCompare(String(a.day)) || (b.at || 0) - (a.at || 0));
+}
+async function abGet(day) {
+  if (supabaseClient) {
+    try {
+      const f = (await abCloudList()).find((r) => r.day === day);
+      if (f) {
+        const { data, error } = await supabaseClient.storage.from(AB_BUCKET).download(AB_DIR + '/' + f.file);
+        if (error) throw error;
+        return { day, blob: data };
+      }
+    } catch (e) { if (!(await abTx('readonly', (st) => st.get(day)))) throw e; }
+  }
+  return abTx('readonly', (st) => st.get(day));
+}
+async function abPut(rec) {
+  if (supabaseClient) {
+    try {
+      const existing = (await abCloudList()).filter((r) => r.day === rec.day).map((r) => AB_DIR + '/' + r.file);
+      const name = rec.day + '__' + rec.shipments + '_' + rec.quotes + '.json';
+      const { error } = await supabaseClient.storage.from(AB_BUCKET).upload(AB_DIR + '/' + name, rec.blob, { contentType: 'application/json', upsert: true });
+      if (error) throw error;
+      const stale = existing.filter((p) => p !== AB_DIR + '/' + name);
+      if (stale.length) await supabaseClient.storage.from(AB_BUCKET).remove(stale);
+      try { await abTx('readwrite', (st) => st.delete(rec.day)); } catch (e) {}
+      return 'cloud';
+    } catch (e) { state.autoBackupError = 'Buluta yüklenemedi, yedek cihazda tutuldu: ' + (e && e.message ? e.message : String(e)); }
+  }
+  await abTx('readwrite', (st) => st.put(rec));
+  return 'local';
+}
+async function abDelete(day) {
+  if (supabaseClient) {
+    try {
+      const files = (await abCloudList()).filter((r) => r.day === day).map((r) => AB_DIR + '/' + r.file);
+      if (files.length) await supabaseClient.storage.from(AB_BUCKET).remove(files);
+    } catch (e) {}
+  }
+  try { await abTx('readwrite', (st) => st.delete(day)); } catch (e) {}
+}
 async function refreshAutoBackups() {
   try { state.autoBackups = await abList(); } catch (e) { state.autoBackups = []; }
   render();
@@ -1193,7 +1246,7 @@ function buildAutoBackupBox(container) {
   ]));
   const tg = h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12.5px', color: 'var(--inkSoft)', marginBottom: '8px' } });
   tg.appendChild(h('input', { type: 'checkbox', checked: on, style: { width: '16px', height: '16px', cursor: 'pointer' }, onchange: (e) => { try { localStorage.setItem('sevkiyat_autobackup', e.target.checked ? '1' : '0'); } catch (err) {} if (e.target.checked) maybeDailyAutoBackup(); render(); } }));
-  tg.appendChild(h('span', {}, 'Uygulama günde bir kez kendiliğinden yedek alsın (son ' + AUTOBACKUP_KEEP + ' yedek cihazda tutulur)'));
+  tg.appendChild(h('span', {}, 'Uygulama günde bir kez kendiliğinden yedek alsın (son ' + AUTOBACKUP_KEEP + ' yedek ' + (supabaseClient ? 'bulutta' : 'cihazda') + ' tutulur)'));
   box.appendChild(tg);
   const row = h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' } });
   row.appendChild(btn([ic('check', 13), state.autoBackupBusy ? ' Alınıyor…' : ' Şimdi Otomatik Yedek Al'], {
@@ -1214,7 +1267,7 @@ function buildAutoBackupBox(container) {
       const item = h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 0', borderTop: '1px solid var(--line)' } });
       item.appendChild(h('div', { style: { flex: '1', minWidth: '0' } }, [
         h('div', { style: { fontSize: '12.5px', fontWeight: '700', color: 'var(--ink)' } }, label),
-        h('div', { style: { fontSize: '11px', color: 'var(--inkSoft)' } }, new Date(r.at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) + ' · ' + r.shipments + ' sevkiyat, ' + r.quotes + ' teklif · ' + ((r.size || 0) / 1024 / 1024).toFixed(1) + ' MB'),
+        h('div', { style: { fontSize: '11px', color: 'var(--inkSoft)' } }, (r.src === 'cloud' ? '☁ ' : '📱 ') + new Date(r.at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) + ' · ' + r.shipments + ' sevkiyat, ' + r.quotes + ' teklif · ' + ((r.size || 0) / 1024 / 1024).toFixed(1) + ' MB'),
       ]));
       item.appendChild(btn(['Geri Yükle'], { onclick: () => restoreFromAutoBackup(r.day), style: { fontSize: '12px', padding: '7px 10px' } }, 'var(--paper2)', 'var(--ink)'));
       item.appendChild(btn([ic('filedown', 13)], { title: 'Dosya olarak indir / paylaş', onclick: () => downloadAutoBackup(r.day), style: { fontSize: '12px', padding: '7px 10px' } }, 'none', 'var(--steel)'));
@@ -1222,7 +1275,7 @@ function buildAutoBackupBox(container) {
       box.appendChild(item);
     });
   }
-  box.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--inkSoft)', lineHeight: '1.5', marginTop: '6px' } }, 'Bu yedekler telefonun içinde saklanır; uygulama silinirse onlar da gider. Önemli yedekleri "Tam Yedek Al" ile dosya olarak da sakla.'));
+  box.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--inkSoft)', lineHeight: '1.5', marginTop: '6px' } }, (supabaseClient ? 'Yedekler bulutta saklanır; telefon kaybolsa veya uygulama silinse de kalır. İnternet yokken alınan yedek geçici olarak cihazda tutulur.' : 'Bulut bağlı değil: yedekler telefonun içinde saklanır, uygulama silinirse onlar da gider.')));
   container.appendChild(box);
 }
 
