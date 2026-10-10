@@ -1002,6 +1002,7 @@ const state = {
     lossPct: '', tinerPct: '', astarPrice: '275', sonkatPrice: '290', tinerPrice: '145', profitPct: '15', laborDiscountPct: '0',
   },
   paintCalcPricesOpen: false, paintCalcPdfBusy: false,
+  autoBackups: [], autoBackupBusy: false, autoBackupError: '', autoRestoreDay: '',
   cloudSyncing: false, lastSyncAt: null, cloudLastError: '',
   pendingDeletions: (() => { try { return JSON.parse(localStorage.getItem('sevkiyat_pending_deletions') || '[]'); } catch (e) { return []; } })(),
   vatRate: 20,
@@ -1097,6 +1098,133 @@ async function runFullBackup() {
   state.backupBusy = false; state.backupProgress = '';
   render();
 }
+
+/* ============================== otomatik günlük yedek (cihaz içi) ============================== */
+const AUTOBACKUP_KEEP = 7;
+function autoBackupEnabled() { try { return localStorage.getItem('sevkiyat_autobackup') !== '0'; } catch (e) { return true; } }
+function abOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('sevkiyat_autobackup', 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore('snap', { keyPath: 'day' }); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function abTx(mode, fn) {
+  return abOpen().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction('snap', mode);
+    const out = fn(tx.objectStore('snap'));
+    tx.oncomplete = () => { db.close(); resolve(out && out.result !== undefined ? out.result : undefined); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+    tx.onabort = () => { db.close(); reject(tx.error || new Error('abort')); };
+  }));
+}
+async function abList() {
+  const all = await abTx('readonly', (st) => st.getAll());
+  return (all || []).map((r) => ({ day: r.day, at: r.at, shipments: r.shipments, quotes: r.quotes, size: r.size })).sort((a, b) => (b.at || 0) - (a.at || 0));
+}
+async function abGet(day) { return abTx('readonly', (st) => st.get(day)); }
+async function abPut(rec) { return abTx('readwrite', (st) => st.put(rec)); }
+async function abDelete(day) { return abTx('readwrite', (st) => st.delete(day)); }
+async function refreshAutoBackups() {
+  try { state.autoBackups = await abList(); } catch (e) { state.autoBackups = []; }
+  render();
+}
+async function createAutoBackup(dayKey, force) {
+  if (!force && !autoBackupEnabled()) return false;
+  if (state.autoBackupBusy) return false;
+  if (!state.shipments.length && !state.trash.length && !state.quotes.length) return false;
+  state.autoBackupBusy = true;
+  try {
+    const day = dayKey || todayISO();
+    const savedFrom = state.backupDateFrom, savedTo = state.backupDateTo;
+    state.backupDateFrom = ''; state.backupDateTo = '';
+    let built;
+    try { built = buildTextBackupPayload(); } finally { state.backupDateFrom = savedFrom; state.backupDateTo = savedTo; }
+    await abPut({ day, at: Date.now(), shipments: built.counts.shipments, quotes: built.counts.quotes, size: built.bytes.size, blob: built.bytes });
+    const list = await abList();
+    const dated = list.filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.day));
+    for (const old of dated.slice(AUTOBACKUP_KEEP)) { try { await abDelete(old.day); } catch (e) {} }
+    state.autoBackups = await abList();
+    state.autoBackupBusy = false;
+    return true;
+  } catch (e) {
+    state.autoBackupBusy = false;
+    state.autoBackupError = 'Otomatik yedek alınamadı: ' + (e && e.message ? e.message : String(e));
+    return false;
+  }
+}
+async function maybeDailyAutoBackup() {
+  if (!autoBackupEnabled() || state.loading || state.autoBackupBusy) return;
+  try {
+    const list = await abList();
+    state.autoBackups = list;
+    if (list.some((r) => r.day === todayISO())) return;
+    if (await createAutoBackup()) { render(); }
+  } catch (e) {}
+}
+async function restoreFromAutoBackup(day) {
+  try {
+    const rec = await abGet(day);
+    if (!rec || !rec.blob) throw new Error('Yedek bulunamadı.');
+    const file = new File([rec.blob], 'Otomatik yedek ' + day + '.json', { type: 'application/json' });
+    state.pendingRestore = null;
+    state.autoRestoreDay = day;
+    await handleJsonFiles([file]);
+  } catch (e) { state.error = 'Otomatik yedek açılamadı: ' + (e && e.message ? e.message : String(e)); render(); }
+}
+async function downloadAutoBackup(day) {
+  try {
+    const rec = await abGet(day);
+    if (!rec || !rec.blob) throw new Error('Yedek bulunamadı.');
+    const mode = await saveOrShareFile(rec.blob, 'sevkiyat-otomatik-yedek-' + day + '.json', 'application/json', { 'application/json': ['.json'] });
+    const msg = backupStatusMessage(mode);
+    if (msg) { state.successMsg = msg; setTimeout(() => { state.successMsg = ''; render(); }, 6000); }
+  } catch (e) { state.error = 'Yedek indirilemedi: ' + (e && e.message ? e.message : String(e)); }
+  render();
+}
+function buildAutoBackupBox(container) {
+  if (!state._abLoaded) { state._abLoaded = true; refreshAutoBackups(); }
+  const on = autoBackupEnabled();
+  const box = h('div', { style: { background: 'var(--cream)', border: '1.5px solid var(--line)', borderRadius: '10px', padding: '12px', marginBottom: '12px' } });
+  box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontWeight: '700', fontSize: '13.5px' } }, [
+    ic('drive', 14, on ? 'var(--signed)' : 'var(--inkSoft)'), ' Otomatik Günlük Yedek',
+    h('span', { style: { marginLeft: 'auto', fontSize: '11px', color: on ? 'var(--signed)' : 'var(--inkSoft)', fontWeight: '600' } }, on ? '● Açık' : '○ Kapalı'),
+  ]));
+  const tg = h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12.5px', color: 'var(--inkSoft)', marginBottom: '8px' } });
+  tg.appendChild(h('input', { type: 'checkbox', checked: on, style: { width: '16px', height: '16px', cursor: 'pointer' }, onchange: (e) => { try { localStorage.setItem('sevkiyat_autobackup', e.target.checked ? '1' : '0'); } catch (err) {} if (e.target.checked) maybeDailyAutoBackup(); render(); } }));
+  tg.appendChild(h('span', {}, 'Uygulama günde bir kez kendiliğinden yedek alsın (son ' + AUTOBACKUP_KEEP + ' gün cihazda tutulur)'));
+  box.appendChild(tg);
+  const row = h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' } });
+  row.appendChild(btn([ic('check', 13), state.autoBackupBusy ? ' Alınıyor…' : ' Şimdi Otomatik Yedek Al'], {
+    disabled: state.autoBackupBusy,
+    onclick: async () => { state.autoBackupError = ''; render(); await nextFrame(); const ok = await createAutoBackup(todayISO(), true); if (ok) { state.successMsg = 'Otomatik yedek alındı.'; setTimeout(() => { state.successMsg = ''; render(); }, 4000); } render(); },
+    style: { fontSize: '12.5px', padding: '8px 12px' },
+  }, 'var(--ink)', 'var(--cream)'));
+  box.appendChild(row);
+  if (state.autoBackupError) box.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--stamp)', marginBottom: '6px' } }, state.autoBackupError));
+  const list = state.autoBackups || [];
+  if (!list.length) {
+    box.appendChild(h('div', { style: { fontSize: '11.5px', color: 'var(--inkSoft)' } }, 'Henüz otomatik yedek yok. Bugünkü yedek uygulama açıkken kendiliğinden alınır.'));
+  } else {
+    list.forEach((r) => {
+      const isSafety = r.day === 'geri-yukleme-oncesi';
+      const label = isSafety ? 'Geri yüklemeden önce' : new Date(r.at).toLocaleDateString('tr-TR', { day: '2-digit', month: 'long', year: 'numeric' });
+      const item = h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 0', borderTop: '1px solid var(--line)' } });
+      item.appendChild(h('div', { style: { flex: '1', minWidth: '0' } }, [
+        h('div', { style: { fontSize: '12.5px', fontWeight: '700', color: 'var(--ink)' } }, label),
+        h('div', { style: { fontSize: '11px', color: 'var(--inkSoft)' } }, new Date(r.at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) + ' · ' + r.shipments + ' sevkiyat, ' + r.quotes + ' teklif · ' + ((r.size || 0) / 1024 / 1024).toFixed(1) + ' MB'),
+      ]));
+      item.appendChild(btn(['Geri Yükle'], { onclick: () => restoreFromAutoBackup(r.day), style: { fontSize: '12px', padding: '7px 10px' } }, 'var(--paper2)', 'var(--ink)'));
+      item.appendChild(btn([ic('filedown', 13)], { title: 'Dosya olarak indir / paylaş', onclick: () => downloadAutoBackup(r.day), style: { fontSize: '12px', padding: '7px 10px' } }, 'none', 'var(--steel)'));
+      item.lastChild.style.border = '1.5px solid var(--line)';
+      box.appendChild(item);
+    });
+  }
+  box.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--inkSoft)', lineHeight: '1.5', marginTop: '6px' } }, 'Bu yedekler telefonun içinde saklanır; uygulama silinirse onlar da gider. Önemli yedekleri "Tam Yedek Al" ile dosya olarak da sakla.'));
+  container.appendChild(box);
+}
+
 function daysSince(ts) { return Math.floor((Date.now() - ts) / 86400000); }
 function formatBackupLabel(ts) {
   const d = daysSince(ts);
@@ -1135,6 +1263,7 @@ async function loadAll() {
   await refreshStorageInfo();
   render();
   if (supabaseClient) { syncFromCloud().catch(() => {}); }
+  setTimeout(() => { maybeDailyAutoBackup(); }, 5000);
 }
 async function refreshStorageInfo() {
   try {
@@ -1584,6 +1713,7 @@ async function confirmRestore() {
       });
     }
     list = list.map((r) => { const c = Object.assign({}, r); delete c._searchIdx; return c; });
+    try { await createAutoBackup('geri-yukleme-oncesi', true); } catch (e) {}
     await dbReplaceAll(list);
     applyRecords(list);
     if (state.pendingRestore.type === 'json' && state.pendingRestore.quotesList && state.pendingRestore.quotesList.length) {
@@ -1954,6 +2084,7 @@ function buildBackupPanelContent(container) {
     }
     container.appendChild(cloudBox);
 
+    buildAutoBackupBox(container);
     container.appendChild(renderStorageBar());
     const rangeRow = h('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px' } });
     rangeRow.appendChild(h('div', { style: { flex: '1' } }, [
@@ -4117,3 +4248,4 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => { navigator.serviceWorker.register('./service-worker.js').catch(() => {}); });
 }
 loadAll();
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(() => { maybeDailyAutoBackup(); }, 3000); });
