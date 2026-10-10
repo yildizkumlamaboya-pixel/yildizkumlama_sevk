@@ -1640,12 +1640,12 @@ function renderHeader() {
       boxShadow: 'var(--header-shadow)',
     },
   }, [
-    h('div', { style: { position: 'absolute', right: '-30px', top: '-40px', width: '170px', height: '170px', borderRadius: '50%', background: 'rgba(255,210,31,0.10)' } }),
+    h('div', { style: { position: 'absolute', right: '-30px', top: '-40px', width: '170px', height: '170px', borderRadius: '50%', background: 'rgba(138,180,255,0.10)' } }),
     h('div', { style: { position: 'absolute', right: '40px', bottom: '-60px', width: '110px', height: '110px', borderRadius: '50%', background: 'rgba(255,255,255,0.08)' } }),
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' } }, [
-      h('div', { style: { width: '46px', height: '46px', borderRadius: '14px', background: '#FFD21F', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto', boxShadow: '0 4px 12px rgba(0,0,0,.35)' } }, [h('img', { src: STAR_IMG, alt: 'Yıldız', style: { width: '30px', height: 'auto', display: 'block' } })]),
+      h('div', { style: { width: '46px', height: '46px', borderRadius: '14px', background: '#8AB4FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto', boxShadow: '0 4px 12px rgba(0,0,0,.35)' } }, [h('img', { src: STAR_IMG, alt: 'Yıldız', style: { width: '30px', height: 'auto', display: 'block' } })]),
       h('div', { style: { flex: '1' } }, [
-        h('h1', { style: { margin: '0', fontFamily: "'Inter',sans-serif", fontWeight: '800', fontSize: '19px', color: '#FFD21F', letterSpacing: '0.01em', textTransform: 'uppercase' } }, 'Yıldız Kumlama & Boya'),
+        h('h1', { style: { margin: '0', fontFamily: "'Inter',sans-serif", fontWeight: '800', fontSize: '19px', color: '#8AB4FF', letterSpacing: '0.01em', textTransform: 'uppercase' } }, 'Yıldız Kumlama & Boya'),
         h('div', { style: { fontFamily: "'Inter',sans-serif", fontSize: '12.5px', color: 'rgba(255,255,255,0.85)', marginTop: '3px', fontWeight: '500' } }, 'Sevkiyat Programı · ' + state.shipments.length + ' kayıt · ' + syncLabel),
       ]),
       h('button', {
@@ -1741,7 +1741,7 @@ function renderListView() {
         if (!text) return;
         startQuickForm(parseQuickEntryText(text));
       },
-      style: { flex: '1', justifyContent: 'center', padding: '11px', fontSize: '13.5px', boxShadow: '0 4px 12px rgba(255,210,31,.25)' },
+      style: { flex: '1', justifyContent: 'center', padding: '11px', fontSize: '13.5px', boxShadow: '0 4px 12px rgba(138,180,255,.25)' },
     }, 'var(--primary)', 'var(--on-primary)'));
     const plateFile = h('input', { type: 'file', accept: 'image/*', style: { display: 'none' }, onchange: (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) readPlateFromPhoto(f); } });
     plateFile.setAttribute('capture', 'environment');
@@ -2297,7 +2297,7 @@ function renderFormView() {
 
   if (state.error) container.appendChild(h('div', { style: { background: 'var(--danger-bg)', color: 'var(--stamp)', padding: '10px 12px', borderRadius: '4px', fontSize: '13px', marginBottom: '14px' } }, state.error));
 
-  container.appendChild(btn([ic('check', 17), ' ' + (state.saving ? 'Kaydediliyor…' : state.editingId ? 'Değişiklikleri Kaydet' : 'Sevkiyatı Kaydet')], { disabled: state.saving, onclick: saveShipment, style: { width: '100%', justifyContent: 'center', padding: '14px', fontFamily: "'Inter',sans-serif", fontSize: '15px', fontWeight: '700', boxShadow: '0 6px 16px rgba(255,210,31,.30)' } }, 'var(--primary)', 'var(--cream)'));
+  container.appendChild(btn([ic('check', 17), ' ' + (state.saving ? 'Kaydediliyor…' : state.editingId ? 'Değişiklikleri Kaydet' : 'Sevkiyatı Kaydet')], { disabled: state.saving, onclick: saveShipment, style: { width: '100%', justifyContent: 'center', padding: '14px', fontFamily: "'Inter',sans-serif", fontSize: '15px', fontWeight: '700', boxShadow: '0 6px 16px rgba(138,180,255,.30)' } }, 'var(--primary)', 'var(--cream)'));
 
   setTimeout(() => {
     const pad = attachSignaturePad(sigCanvas, f.signature, (val) => { f.signature = val; });
@@ -4002,11 +4002,11 @@ function pressPin(d) {
 }
 function renderLockScreen() {
   const wrap = h('div', { style: { position: 'fixed', inset: '0', background: '#111113', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', zIndex: '100', color: '#fff' } });
-  wrap.appendChild(h('div', { style: { background: '#fff', borderRadius: '16px', padding: '10px 14px', marginBottom: '14px', boxShadow: '0 0 0 3px #FFD21F' } }, [h('img', { src: LOGO_H, alt: 'Yıldız Kumlama & Boya', style: { width: '260px', maxWidth: '78vw', height: 'auto', display: 'block' } })]));
-  wrap.appendChild(h('div', { style: { fontSize: '16px', fontWeight: '700', marginBottom: '4px', color: '#FFD21F' } }, 'Sevkiyat Programı'));
+  wrap.appendChild(h('div', { style: { background: '#fff', borderRadius: '16px', padding: '10px 14px', marginBottom: '14px', boxShadow: '0 0 0 3px #8AB4FF' } }, [h('img', { src: LOGO_H, alt: 'Yıldız Kumlama & Boya', style: { width: '260px', maxWidth: '78vw', height: 'auto', display: 'block' } })]));
+  wrap.appendChild(h('div', { style: { fontSize: '16px', fontWeight: '700', marginBottom: '4px', color: '#8AB4FF' } }, 'Sevkiyat Programı'));
   wrap.appendChild(h('div', { style: { fontSize: '13px', color: state.pinError ? '#F1AEB5' : 'rgba(255,255,255,.65)', marginBottom: '22px' } }, state.pinError ? 'Yanlış PIN, tekrar dene' : 'PIN kodunu gir'));
   const dots = h('div', { style: { display: 'flex', gap: '14px', marginBottom: '28px' } });
-  for (let i = 0; i < 4; i++) dots.appendChild(h('div', { style: { width: '14px', height: '14px', borderRadius: '50%', border: '2px solid ' + (state.pinError ? '#DC3545' : '#FFD21F'), background: i < state.pinInput.length ? (state.pinError ? '#DC3545' : '#FFD21F') : 'transparent' } }));
+  for (let i = 0; i < 4; i++) dots.appendChild(h('div', { style: { width: '14px', height: '14px', borderRadius: '50%', border: '2px solid ' + (state.pinError ? '#DC3545' : '#8AB4FF'), background: i < state.pinInput.length ? (state.pinError ? '#DC3545' : '#8AB4FF') : 'transparent' } }));
   wrap.appendChild(dots);
   const pad = h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 72px)', gap: '14px' } });
   const key = (label, fn) => h('button', { onclick: fn, style: { width: '72px', height: '72px', borderRadius: '50%', border: '1px solid rgba(255,255,255,.25)', background: label === '' ? 'transparent' : 'rgba(255,255,255,.08)', color: '#fff', fontSize: '26px', fontWeight: '500', cursor: 'pointer', visibility: label === '' ? 'hidden' : 'visible' } }, label);
