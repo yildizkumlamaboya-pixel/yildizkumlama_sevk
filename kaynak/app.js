@@ -1627,11 +1627,10 @@ function btn(children, props, colorBg, colorFg) {
   return h('button', Object.assign({ className: 'btn' }, props, { style }), children);
 }
 
+function getSyncLabel() {
+  return supabaseClient ? (state.cloudSyncing ? 'Bulut senkronize ediliyor…' : 'Bulut bağlı') : 'Cihazda saklanıyor';
+}
 function renderHeader() {
-  const overdue = !state.lastBackupAt || daysSince(state.lastBackupAt) >= 7;
-  const syncLabel = supabaseClient
-    ? (state.cloudSyncing ? 'bulut senkronize ediliyor…' : 'bulut bağlı')
-    : 'cihazda saklanıyor';
   return h('div', {
     style: {
       background: 'var(--header-gradient)',
@@ -1646,20 +1645,7 @@ function renderHeader() {
       h('div', { style: { width: '46px', height: '46px', borderRadius: '14px', background: '#8AB4FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto', boxShadow: '0 4px 12px rgba(0,0,0,.35)' } }, [h('img', { src: STAR_IMG, alt: 'Yıldız', style: { width: '30px', height: 'auto', display: 'block' } })]),
       h('div', { style: { flex: '1' } }, [
         h('h1', { style: { margin: '0', fontFamily: "'Inter',sans-serif", fontWeight: '800', fontSize: '19px', color: '#8AB4FF', letterSpacing: '0.01em', textTransform: 'uppercase' } }, 'Yıldız Kumlama & Boya'),
-        h('div', { style: { fontFamily: "'Inter',sans-serif", fontSize: '12.5px', color: 'rgba(255,255,255,0.85)', marginTop: '3px', fontWeight: '500' } }, 'Sevkiyat Programı · ' + state.shipments.length + ' kayıt · ' + syncLabel),
-      ]),
-      h('button', {
-        title: 'Karanlık Mod',
-        onclick: (e) => { e.stopPropagation(); state.darkMode = !state.darkMode; try { localStorage.setItem('sevkiyat_dark_mode', state.darkMode ? '1' : '0'); } catch (err) {} render(); },
-        style: { width: '38px', height: '38px', borderRadius: '50%', background: 'rgba(255,255,255,0.18)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flex: '0 0 auto', fontSize: '17px' },
-      }, state.darkMode ? '☀️' : '🌙'),
-      h('button', {
-        title: 'Yedekleme',
-        onclick: (e) => { e.stopPropagation(); state.uiExpanded.backup = !state.uiExpanded.backup; render(); },
-        style: { position: 'relative', width: '38px', height: '38px', borderRadius: '50%', background: 'rgba(255,255,255,0.18)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flex: '0 0 auto' },
-      }, [
-        ic(overdue ? 'warn' : 'drive', 18, '#fff'),
-        overdue ? h('span', { style: { position: 'absolute', top: '4px', right: '4px', width: '9px', height: '9px', borderRadius: '50%', background: 'var(--stamp)', border: '1.5px solid #fff' } }) : '',
+        h('div', { style: { fontFamily: "'Inter',sans-serif", fontSize: '12.5px', color: 'rgba(255,255,255,0.85)', marginTop: '3px', fontWeight: '500' } }, 'Sevkiyat Programı · ' + state.shipments.length + ' kayıt'),
       ]),
     ]),
   ]);
@@ -4104,7 +4090,7 @@ function renderBottomNav() {
   bar.appendChild(tab('Görevler', 'check', 'tasks', t.ready.length + t.missing.length));
   bar.appendChild(h('button', { className: 'fab', title: 'Yeni sevkiyat', onclick: newShipment }, [ic('plus', 28)]));
   bar.appendChild(tab('Maliyet', 'sheet', 'cost'));
-  bar.appendChild(h('button', { className: moreActive || state.navMenuOpen ? 'on' : '', onclick: () => { state.navMenuOpen = !state.navMenuOpen; render(); } }, [ic('menu', 21), 'Daha Fazla', state.trash.length && !moreActive ? h('span', { className: 'bdg', style: { background: 'var(--inkSoft)' } }, String(state.trash.length)) : null]));
+  bar.appendChild(h('button', { className: moreActive || state.navMenuOpen ? 'on' : '', onclick: () => { state.navMenuOpen = !state.navMenuOpen; render(); } }, [ic('menu', 21), 'Daha Fazla', (!state.lastBackupAt || daysSince(state.lastBackupAt) >= 7) ? h('span', { className: 'bdg' }, '!') : (state.trash.length && !moreActive ? h('span', { className: 'bdg', style: { background: 'var(--inkSoft)' } }, String(state.trash.length)) : null)]));
   return bar;
 }
 function renderNavMenu() {
@@ -4112,6 +4098,7 @@ function renderNavMenu() {
   overlay.appendChild(h('div', { style: { position: 'absolute', inset: '0', background: 'rgba(17,24,39,0.45)' } }));
   const sheet = h('div', { className: 'sheet', onclick: (e) => e.stopPropagation() });
   sheet.appendChild(h('div', { style: { width: '40px', height: '4px', borderRadius: '4px', background: 'var(--line)', margin: '0 auto 14px' } }));
+  sheet.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px', fontSize: '12.5px', fontWeight: '600', color: 'var(--inkSoft)', margin: '-2px 0 12px' } }, [h('span', { style: { width: '8px', height: '8px', borderRadius: '50%', background: supabaseClient ? 'var(--signed)' : 'var(--inkSoft)', display: 'inline-block' } }), getSyncLabel()]));
   const grid = h('div', { className: 'sheetgrid' });
   const tile = (label, iconName, onclick, on, badge) => h('div', { className: 'tile' + (on ? ' on' : ''), onclick }, [ic(iconName, 24), label, badge ? h('span', { className: 'bdg' }, String(badge)) : null]);
   NAV_ITEMS.filter((it) => ['prices', 'quotes', 'summary', 'paintcalc', 'trash'].indexOf(it.view) >= 0).forEach((it) => {
