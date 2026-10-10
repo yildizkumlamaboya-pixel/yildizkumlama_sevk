@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<!--
+  SEVKİYAT PROGRAMI — native APK paketleme notları:
+  - Veriler IndexedDB'de saklanır. Bir WebView tabanlı APK sarmalayıcısı
+    içine paketlendiğinde, bu depolama YÜKLÜ UYGULAMANIN kendi özel veri
+    alanına bağlanır — bu genelde çok daha geniş bir kotaya sahiptir.
+  - Fotoğraf/kamera seçici native tarafta WebChromeClient.onShowFileChooser()
+    gerektirir. Bazı basit HTML→APK araçları bunu uygulamaz.
+  - Excel ve Supabase CDN'den yüklenir; ilk çalıştırmada internet gerekir.
+-->
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>Sevkiyat Programı</title>
+<link rel="manifest" href="./manifest.json" />
+<meta name="theme-color" content="#17171A" />
+<link rel="apple-touch-icon" href="./icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+:root{
+  --paper:#F4F4F1; --paper2:#EBEBE6; --ink:#17171A; --inkSoft:#6B6B72;
+  --stamp:#D92D20; --steel:#8F6B00; --line:#E1E1DA; --signed:#047857; --cream:#FFFFFF;
+  --primary:#17171A; --primary-dark:#000000; --on-primary:#FFFFFF; --accent:#FFD21F; --on-accent:#17171A;
+  --signed-bg:rgba(4,120,87,.12); --signed-bg-soft:rgba(4,120,87,.10);
+  --signed-border:rgba(4,120,87,.28); --signed-border-soft:rgba(4,120,87,.22); --signed-border-dash:rgba(4,120,87,.32);
+  --warn:#B45309; --warn-bg:rgba(180,83,9,.13); --warn-bg-solid:#FEF3E2; --warn-border:#F3D9AE;
+  --danger-bg:rgba(217,45,32,.11);
+  --header-gradient:linear-gradient(135deg, #0B0B0D 0%, #18181B 60%, #26262B 100%);
+  --header-shadow:0 8px 24px rgba(0,0,0,.28);
+  --accent-soft-bg:linear-gradient(135deg, #FFF8D9, #FFFBEA); --accent-soft-border:#F0DC85;
+  --shadow-sm:0 1px 2px rgba(23,23,26,.06);
+  --shadow-md:0 4px 14px rgba(23,23,26,.09);
+  --shadow-lg:0 12px 28px rgba(23,23,26,.14);
+  --bg-gradient:linear-gradient(180deg,#ECECE7 0%,#F5F5F2 320px,#F5F5F2 100%);
+}
+html[data-theme="dark"]{
+  --paper:#0E0E10; --paper2:#18181B; --ink:#F2F2EF; --inkSoft:#9A9AA2;
+  --stamp:#F87171; --steel:#F2C94C; --line:#2B2B30; --signed:#34D399; --cream:#1A1A1E;
+  --primary:#FFD21F; --primary-dark:#E6B800; --on-primary:#17171A; --accent:#FFD21F; --on-accent:#17171A;
+  --signed-bg:rgba(52,211,153,.14); --signed-bg-soft:rgba(52,211,153,.12);
+  --signed-border:rgba(52,211,153,.3); --signed-border-soft:rgba(52,211,153,.25); --signed-border-dash:rgba(52,211,153,.35);
+  --warn:#E0A758; --warn-bg:rgba(224,167,88,.16); --warn-bg-solid:rgba(224,167,88,.1); --warn-border:rgba(224,167,88,.32);
+  --danger-bg:rgba(248,113,113,.16);
+  --header-gradient:linear-gradient(135deg, #000000 0%, #101012 60%, #1A1A1D 100%);
+  --header-shadow:0 8px 24px rgba(0,0,0,.5);
+  --accent-soft-bg:linear-gradient(135deg, #2A2410, #1F1B0B); --accent-soft-border:#4D4215;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.3);
+  --shadow-md:0 4px 14px rgba(0,0,0,.4);
+  --shadow-lg:0 12px 28px rgba(0,0,0,.5);
+  --bg-gradient:linear-gradient(180deg,#09090A 0%,#0E0E10 320px,#0E0E10 100%);
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:var(--bg-gradient);font-family:'Inter',sans-serif;color:var(--ink);-webkit-tap-highlight-color:transparent;transition:background .2s ease,color .2s ease;}
+#app{min-height:100vh;padding-bottom:48px;}
+#app.has-nav{padding-bottom:calc(92px + env(safe-area-inset-bottom));}
+.bnav{position:fixed;left:0;right:0;bottom:0;z-index:40;display:flex;align-items:flex-end;justify-content:space-around;background:var(--cream);border-top:1px solid var(--line);box-shadow:0 -6px 20px rgba(0,0,0,.08);padding:6px 6px calc(8px + env(safe-area-inset-bottom));}
+.bnav button{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;color:var(--inkSoft);font-size:10.5px;font-weight:600;font-family:inherit;padding:6px 2px;cursor:pointer;position:relative;border-radius:12px;}
+.bnav button.on{color:var(--primary);}
+.bnav button.on::before{content:'';position:absolute;top:-7px;width:26px;height:3px;border-radius:3px;background:var(--accent);}
+.bnav .fab{flex:0 0 58px;height:58px;margin-top:-26px;border-radius:50%;background:var(--accent);color:var(--on-accent);box-shadow:0 8px 20px rgba(255,210,31,.45);padding:0;align-items:center;justify-content:center;}
+.bnav .fab:active{transform:scale(.94);}
+.bnav .bdg{position:absolute;top:0;left:calc(50% + 6px);background:var(--stamp);color:#fff;border-radius:999px;font-size:10px;padding:1px 6px;font-weight:700;}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--paper);border-radius:22px 22px 0 0;padding:14px 16px calc(24px + env(safe-area-inset-bottom));box-shadow:0 -12px 40px rgba(0,0,0,.3);animation:sheetIn .2s ease-out;}
+@keyframes sheetIn{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
+.sheetgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.sheetgrid .tile{display:flex;flex-direction:column;align-items:center;gap:7px;padding:14px 6px;border-radius:16px;background:var(--cream);border:1.5px solid var(--line);font-size:12.5px;font-weight:600;color:var(--ink);cursor:pointer;position:relative;text-align:center;}
+.sheetgrid .tile.on{border-color:var(--primary);color:var(--primary);}
+.sheetgrid .tile .bdg{position:absolute;top:6px;right:8px;background:var(--stamp);color:#fff;border-radius:999px;font-size:10px;padding:1px 6px;font-weight:700;}
+input,select,textarea,button{font-family:inherit;}
+.input{width:100%;box-sizing:border-box;padding:11px 13px;font-family:'IBM Plex Mono',monospace;font-size:15px;color:var(--ink);background:var(--cream);border:1.5px solid var(--line);border-radius:12px;outline:none;transition:border-color .15s ease, box-shadow .15s ease;}
+.input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(255,210,31,.15);}
+.label{display:flex;align-items:center;gap:6px;font-family:'Inter',sans-serif;font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--inkSoft);margin-bottom:7px;}
+.field{margin-bottom:18px;}
+.btn{cursor:pointer;border:none;border-radius:999px;font-weight:600;font-family:'Inter',sans-serif;display:inline-flex;align-items:center;gap:6px;transition:transform .1s ease, filter .15s ease, box-shadow .15s ease;}
+.btn:hover{filter:brightness(1.06);}
+.btn:active{transform:scale(0.97);}
+.btn:disabled{opacity:.5;cursor:default;transform:none;filter:none;}
+.card{background:var(--cream);border:1.5px solid var(--line);border-radius:18px;padding:16px 18px;cursor:pointer;box-shadow:var(--shadow-sm);transition:box-shadow .15s ease, transform .1s ease;}
+.card:hover{box-shadow:var(--shadow-md);}
+.card:active{transform:scale(0.995);}
+.badge{font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;}
+.detailrow{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line);}
+.detailrow span:first-child{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--inkSoft);}
+.detailrow span:last-child{font-family:'IBM Plex Mono',monospace;font-size:14px;text-align:right;}
+@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+.spin{animation:spin .8s linear infinite;}
+@keyframes panelIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:translateY(0);}}
+.panel-in{animation:panelIn .18s ease-out;}
+select.input{cursor:pointer;}
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px;}
+
+/* ---- Modal: uzun içerik kaydırılabilsin ---- */
+#app > div[style*="position: fixed"][style*="rgba"]{overflow-y:auto;align-items:flex-start !important;}
+#app > div[style*="position: fixed"][style*="rgba"] > div{margin:auto;}
+/* ---- Masaüstü / geniş ekran uyumu ---- */
+@media (min-width:900px){
+  body{font-size:15px;}
+  #app > div:not(:nth-child(2)):not([style*="fixed"]){max-width:1040px;margin-left:auto;margin-right:auto;width:100%;}
+  #app > div:nth-child(2){padding-left:max(20px,calc((100% - 1040px)/2 + 20px)) !important;padding-right:max(20px,calc((100% - 1040px)/2 + 20px)) !important;border-radius:0 0 26px 26px !important;}
+  #app[data-view="form"] > div:not(:nth-child(2)):not([style*="fixed"]),#app[data-view="detail"] > div:not(:nth-child(2)):not([style*="fixed"]),#app[data-view="receipt"] > div:not(:nth-child(2)):not([style*="fixed"]),#app[data-view="paintcalc"] > div:not(:nth-child(2)):not([style*="fixed"]),#app[data-view="quotes"] > div:not(:nth-child(2)):not([style*="fixed"]){max-width:760px;}
+  .bnav{left:50%;right:auto;width:560px;transform:translateX(-50%);border-radius:22px 22px 0 0;border:1px solid var(--line);border-bottom:none;}
+  .sheet{max-width:560px;margin:0 auto;}
+  .card{padding:18px 22px;}
+  .card,.btn,.bnav button,.sheetgrid .tile{transition:box-shadow .15s ease,transform .1s ease,filter .15s ease;}
+  .card:hover{transform:translateY(-1px);}
+  .bnav button:hover{color:var(--ink);}
+  .input,select.input{font-size:14.5px;}
+  ::-webkit-scrollbar{width:11px;height:11px;}
+}
+@media (min-width:1400px){
+  #app > div:not(:nth-child(2)):not([style*="fixed"]){max-width:1160px;}
+  #app > div:nth-child(2){padding-left:max(20px,calc((100% - 1160px)/2 + 20px)) !important;padding-right:max(20px,calc((100% - 1160px)/2 + 20px)) !important;}
+}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+<div id="app"></div>
+<script>
+(async function () {
+  try {
+    const texts = await Promise.all([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(async (i) => {
+      const r = await fetch('./app' + i + '.bin');
+      return await new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).text();
+    }));
+    const s = document.createElement('script');
+    s.textContent = texts.join('');
+    document.body.appendChild(s);
+  } catch (e) {
+    document.getElementById('app').textContent = 'Yükleme hatası: ' + (e && e.message ? e.message : e) + ' — sayfayı yenileyin (Ctrl+F5).';
+  }
+})();
+</script>
+
+</body>
+</html>
