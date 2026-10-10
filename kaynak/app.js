@@ -2161,9 +2161,9 @@ function buildResultsList(filtered) {
       const priceRow = h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 16px', fontFamily: "'IBM Plex Mono',monospace", fontSize: '12.5px', marginTop: '6px', padding: '6px 8px', background: 'rgba(255,210,31,0.06)', borderRadius: '6px' } });
       priceRow.appendChild(h('span', { style: { color: 'var(--steel)', fontWeight: '600' } },
         'Birim Fiyat: ' + formatMoney(parseFloat(s.unitPrice)) + '/' + unitLabel(s.tonnageUnit)));
-      if (amount !== null) priceRow.appendChild(h('span', { style: { color: 'var(--inkSoft)' } }, 'Tutar: ' + formatMoney(amount) + ' (KDV dahil ' + formatMoney(withVat(amount)) + ')'));
+      if (amount !== null) priceRow.appendChild(h('span', { style: { color: 'var(--inkSoft)' } }, 'Tutar (KDV hariç): ' + formatMoney(amount) + ' (KDV dahil ' + formatMoney(withVat(amount)) + ')'));
       if (hasPaintCost) priceRow.appendChild(h('span', { style: { color: 'var(--stamp)' } }, 'Boya: -' + formatMoney(parseFloat(s.paintCost))));
-      if (net !== null) priceRow.appendChild(h('span', { style: { color: 'var(--signed)', fontWeight: '700' } }, 'Net: ' + formatMoney(net)));
+      if (net !== null && hasPaintCost) priceRow.appendChild(h('span', { style: { color: 'var(--signed)', fontWeight: '700' } }, 'Net: ' + formatMoney(net)));
       card.appendChild(priceRow);
     }
 
