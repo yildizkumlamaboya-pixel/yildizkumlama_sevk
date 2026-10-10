@@ -2158,7 +2158,7 @@ function buildResultsList(filtered) {
       const amount = costAmount(s);
       const net = netAmount(s);
       const hasPaintCost = s.paintCost !== undefined && s.paintCost !== null && s.paintCost !== '' && !isNaN(parseFloat(s.paintCost));
-      const priceRow = h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 16px', fontFamily: "'IBM Plex Mono',monospace", fontSize: '12.5px', marginTop: '6px', padding: '6px 8px', background: 'rgba(255,210,31,0.06)', borderRadius: '6px' } });
+      const priceRow = h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 16px', fontFamily: "'IBM Plex Mono',monospace", fontSize: '12.5px', marginTop: '6px', padding: '6px 8px', background: 'var(--paper2)', borderRadius: '6px' } });
       priceRow.appendChild(h('span', { style: { color: 'var(--steel)', fontWeight: '600' } },
         'Birim Fiyat: ' + formatMoney(parseFloat(s.unitPrice)) + '/' + unitLabel(s.tonnageUnit)));
       if (amount !== null) priceRow.appendChild(h('span', { style: { color: 'var(--inkSoft)' } }, 'Tutar (KDV hariç): ' + formatMoney(amount) + ' (KDV dahil ' + formatMoney(withVat(amount)) + ')'));
