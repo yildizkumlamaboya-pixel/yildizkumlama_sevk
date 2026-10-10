@@ -1,1 +1,3 @@
-# yildizkumlama_sevk
+# Sevkiyat Programı
+
+Yıldız Kumlama Boya sevkiyat takip uygulaması (PWA).
