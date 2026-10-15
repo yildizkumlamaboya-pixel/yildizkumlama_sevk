@@ -1437,7 +1437,7 @@ function assistantBrowserVoice(t) {
 async function assistantTtsStream(t, my) {
   AIABR = new AbortController();
   const r = await fetch(SUPABASE_URL + '/functions/v1/ai-sevkiyat', { method: 'POST', signal: AIABR.signal, headers: { apikey: SUPABASE_PUBLISHABLE_KEY, Authorization: 'Bearer ' + SUPABASE_PUBLISHABLE_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify({ tts: t, stream: true }) });
-  if (!r.ok || !r.body || /json/.test(r.headers.get('content-type') || '')) throw new Error('tts');
+  if (!r.ok || !r.body || /json/.test(r.headers.get('content-type') || '')) { let d = ''; try { const j = await r.json(); d = JSON.stringify(j.detay || j.err || '').slice(0, 90); } catch (e) {} throw new Error('tts ' + d); }
   AIX = AIX || new (window.AudioContext || window.webkitAudioContext)();
   if (AIX.state === 'suspended') AIX.resume();
   const rd = r.body.getReader(), dec = new TextDecoder();
@@ -1471,16 +1471,18 @@ function assistantSpeechText(t) {
 }
 function assistantSpeakText(t) {
   if (!state.assistantSpeak || !t) return;
-  const clean = assistantSpeechText(t).slice(0, 360);
+  let clean = assistantSpeechText(t);
+  // uzun cevapta sadece ilk cümleleri oku (hızlı başlasın)
+  if (clean.length > 230) { const parts = clean.split(/(?<=[.!?])\s+/); let acc = ''; for (const x of parts) { if ((acc + ' ' + x).length > 230 && acc) break; acc += (acc ? ' ' : '') + x; } clean = acc.slice(0, 260); }
   if (!clean) return;
   assistantStopSpeak();
   const my = AICUR;
-  if (AIFAIL >= 3 || !window.AudioContext && !window.webkitAudioContext) { assistantBrowserVoice(clean); return; }
-  assistantTtsStream(clean, my).then(() => { AIFAIL = 0; }).catch((e) => {
+  const attempt = (n) => assistantTtsStream(clean, my).catch((e) => {
     if (my !== AICUR) return;
-    AIFAIL++; assistantBrowserVoice(clean);
-    try { state.assistantMsgs.push({ r: 'a', t: '(Gemini sesi açılamadı: ' + String(e && e.message || e).slice(0, 60) + ' — yedek ses kullanıldı)' }); render(); } catch (x) {}
+    if (n < 1) { return new Promise((res) => setTimeout(res, 500)).then(() => (my === AICUR ? attempt(n + 1) : null)); }
+    try { state.assistantMsgs.push({ r: 'a', t: '(Ses şu an açılamadı: ' + String(e && e.message || e).slice(0, 80) + ')' }); render(); } catch (x) {}
   });
+  attempt(0);
 }
 function assistantToggleSpeak() {
   state.assistantSpeak = !state.assistantSpeak;
