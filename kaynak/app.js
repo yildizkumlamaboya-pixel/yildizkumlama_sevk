@@ -28,6 +28,9 @@ function icon(svgInner, size) {
   return span;
 }
 const ICONS = {
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/>',
+  speaker: '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>',
+  speakeroff: '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 9l5 6M22 9l-5 6"/>',
   sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z"/>',
   truck: '<path d="M14 18V6a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h1"/><path d="M14 9h4l4 4v4a1 1 0 0 1-1 1h-2"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
@@ -1003,7 +1006,7 @@ const state = {
     lossPct: '', tinerPct: '', astarPrice: '275', sonkatPrice: '290', tinerPrice: '145', profitPct: '15', laborDiscountPct: '0',
   },
   paintCalcPricesOpen: false, paintCalcPdfBusy: false,
-  assistantOpen: false, assistantMsgs: [], assistantBusy: false, assistantPending: null, assistantInput: '', assistantRec: null, assistantListening: false,
+  assistantOpen: false, assistantMsgs: [], assistantSpeak: (() => { try { return localStorage.getItem('sevkiyat_ai_ses') !== '0'; } catch (e) { return true; } })(), assistantLive: '', assistantBusy: false, assistantPending: null, assistantInput: '', assistantRec: null, assistantListening: false,
   autoBackups: [], autoBackupBusy: false, autoBackupError: '', autoRestoreDay: '',
   cloudSyncing: false, lastSyncAt: null, cloudLastError: '',
   pendingDeletions: (() => { try { return JSON.parse(localStorage.getItem('sevkiyat_pending_deletions') || '[]'); } catch (e) { return []; } })(),
@@ -1412,10 +1415,44 @@ async function applyAssistantOps() {
   state.assistantMsgs.push({ r: 'a', t: '✓ ' + ok + ' işlem uygulandı' + (fail ? ', ' + fail + ' işlem yapılamadı.' : '.') + ' (Öncesinde otomatik yedek alındı; silinenler Çöp Kutusu\'nda.)' });
   state.assistantBusy = false; render();
 }
+
+function assistantStopSpeak() { try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {} }
+function assistantSpeakText(t) {
+  if (!state.assistantSpeak || !window.speechSynthesis || !t) return;
+  try {
+    const ss = window.speechSynthesis; ss.cancel();
+    const clean = String(t).replace(/[*_#`•→✓]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 600);
+    const u = new SpeechSynthesisUtterance(clean);
+    u.lang = 'tr-TR'; u.rate = 1.05;
+    const v = (ss.getVoices() || []).find((x) => /tr[-_]TR/i.test(x.lang));
+    if (v) u.voice = v;
+    ss.speak(u);
+  } catch (e) {}
+}
+function assistantToggleSpeak() {
+  state.assistantSpeak = !state.assistantSpeak;
+  try { localStorage.setItem('sevkiyat_ai_ses', state.assistantSpeak ? '1' : '0'); } catch (e) {}
+  if (!state.assistantSpeak) assistantStopSpeak();
+  render();
+}
+function assistantMicToggle() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return;
+  assistantStopSpeak();
+  if (state.assistantRec) { try { state.assistantRec.stop(); } catch (e) {} return; }
+  const r = new SR(); r.lang = 'tr-TR'; r.interimResults = true; r.continuous = false;
+  state.assistantRec = r; state.assistantListening = true; state.assistantLive = ''; render();
+  let last = '';
+  r.onresult = (e) => { let t = ''; for (const x of e.results) t += x[0].transcript; last = t; state.assistantLive = t; const el = document.getElementById('ai-live'); if (el) el.textContent = t || 'Dinliyorum…'; };
+  r.onerror = () => { state.assistantRec = null; state.assistantListening = false; state.assistantLive = ''; render(); };
+  r.onend = () => { state.assistantRec = null; state.assistantListening = false; state.assistantLive = ''; if (last.trim()) askAssistant(last); else render(); };
+  try { r.start(); } catch (e) { state.assistantRec = null; state.assistantListening = false; render(); }
+}
 async function askAssistant(text) {
   text = String(text || '').trim();
   if (!text || state.assistantBusy) return;
   state.assistantMsgs.push({ r: 'u', t: text });
+  assistantStopSpeak(); try { if (window.speechSynthesis) window.speechSynthesis.getVoices(); } catch (e) {}
   state.assistantBusy = true; state.assistantInput = ''; render();
   let reply = '', opened = false;
   try {
@@ -1430,14 +1467,14 @@ async function askAssistant(text) {
     if (d.islem === 'uygula' && Array.isArray(d.islemler) && d.islemler.length) {
       state.assistantPending = { ops: d.islemler.slice(0, 200), text };
       state.assistantMsgs.push({ r: 'a', t: reply });
-      assistantSave(text, reply);
+      assistantSave(text, reply); assistantSpeakText(reply);
       state.assistantBusy = false; render();
       return;
     }
     if (d.islem === 'ac') {
       if (state.pinEnabled === false || true) { /* yetki: sadece form açılır, kayıt kullanıcıdadır */ }
       state.assistantMsgs.push({ r: 'a', t: reply });
-      assistantSave(text, reply);
+      assistantSave(text, reply); assistantSpeakText(reply);
       state.assistantBusy = false;
       opened = assistantOpenTarget(d);
       if (!opened) { state.assistantMsgs.push({ r: 'a', t: 'Bu ekranı açamadım.' }); render(); }
@@ -1445,16 +1482,20 @@ async function askAssistant(text) {
     }
   } catch (e) { reply = (e && e.message) ? e.message : 'Asistan şu an cevap veremedi.'; }
   state.assistantMsgs.push({ r: 'a', t: reply });
+  assistantSpeakText(reply);
   if (!/cevap veremedi|internet|yoğun|Yetkisiz/.test(reply)) assistantSave(text, reply);
   state.assistantBusy = false; render();
   setTimeout(() => { const L = document.getElementById('ai-log'); if (L) L.scrollTop = L.scrollHeight; }, 30);
 }
 function renderAssistantModal() {
-  const overlay = h('div', { style: { position: 'fixed', inset: '0', background: 'rgba(17,24,39,.55)', zIndex: '70', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }, onclick: () => { state.assistantOpen = false; render(); } });
+  const overlay = h('div', { style: { position: 'fixed', inset: '0', background: 'rgba(17,24,39,.55)', zIndex: '70', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }, onclick: () => { assistantStopSpeak(); state.assistantOpen = false; render(); } });
   const box = h('div', { onclick: (e) => e.stopPropagation(), style: { background: 'var(--paper)', width: '100%', maxWidth: '560px', borderRadius: '22px 22px 0 0', padding: '14px 14px calc(14px + env(safe-area-inset-bottom))', boxShadow: '0 -12px 40px rgba(0,0,0,.3)', display: 'flex', flexDirection: 'column', maxHeight: '86vh' } });
   box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' } }, [
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '7px', fontWeight: '800', fontSize: '15px' } }, [ic('sparkle', 17, 'var(--accent)'), ' Asistan']),
-    h('span', { onclick: () => { state.assistantOpen = false; render(); }, style: { cursor: 'pointer', color: 'var(--inkSoft)', fontWeight: '700', padding: '4px 6px', fontSize: '16px' } }, '✕'),
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } }, [
+      h('span', { onclick: assistantToggleSpeak, title: 'Sesli cevap', style: { cursor: 'pointer', color: state.assistantSpeak ? 'var(--accent)' : 'var(--inkSoft)', padding: '4px', display: 'inline-flex' } }, [ic(state.assistantSpeak ? 'speaker' : 'speakeroff', 22)]),
+      h('span', { onclick: () => { assistantStopSpeak(); state.assistantOpen = false; render(); }, style: { cursor: 'pointer', color: 'var(--inkSoft)', fontWeight: '700', padding: '4px 6px', fontSize: '16px' } }, '✕'),
+    ]),
   ]));
   const log = h('div', { id: 'ai-log', style: { overflowY: 'auto', flex: '1', minHeight: '28vh', maxHeight: '52vh', padding: '2px', display: 'flex', flexDirection: 'column', gap: '8px' } });
   state.assistantMsgs.forEach((m) => {
@@ -1479,20 +1520,13 @@ function renderAssistantModal() {
     ['Bu ay toplam tutar ne kadar?', 'En çok iş yaptığımız firma hangisi?', 'Faturası kesilmemiş kaç sevkiyat var?'].forEach((q) => sug.appendChild(h('button', { type: 'button', onclick: () => askAssistant(q), style: { border: '1.5px solid var(--line)', background: 'var(--cream)', color: 'var(--ink)', borderRadius: '999px', padding: '6px 11px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' } }, q)));
     box.appendChild(sug);
   }
+  if (state.assistantListening) box.appendChild(h('div', { id: 'ai-live', style: { margin: '8px 0 0', padding: '8px 12px', borderRadius: '12px', background: 'var(--danger-bg)', color: 'var(--stamp)', fontWeight: '700', fontSize: '13.5px', textAlign: 'center' } }, state.assistantLive || 'Dinliyorum… konuş'));
   const row = h('div', { style: { display: 'flex', gap: '8px', marginTop: '10px', alignItems: 'flex-end' } });
   const ta = h('textarea', { id: 'ai-input', rows: 2, className: 'input', placeholder: 'Sorunu veya yapmak istediğini yaz…', style: { flex: '1', resize: 'none', fontFamily: "'Inter',sans-serif", fontSize: '14px' }, oninput: (e) => { state.assistantInput = e.target.value; }, onkeydown: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askAssistant(e.target.value); } } });
   ta.value = state.assistantInput || '';
   row.appendChild(ta);
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (SR) row.appendChild(btn([state.assistantListening ? '■' : '🎤'], { type: 'button', title: 'Sesle yaz', onclick: () => {
-    if (state.assistantRec) { try { state.assistantRec.stop(); } catch (e) {} return; }
-    const r = new SR(); r.lang = 'tr-TR'; r.interimResults = true; r.continuous = false; state.assistantRec = r; state.assistantListening = true; render();
-    let last = '';
-    r.onresult = (e) => { let t = ''; for (const x of e.results) t += x[0].transcript; last = t; const el = document.getElementById('ai-input'); if (el) el.value = t; state.assistantInput = t; };
-    r.onerror = () => { state.assistantRec = null; state.assistantListening = false; render(); };
-    r.onend = () => { state.assistantRec = null; state.assistantListening = false; if (last.trim()) askAssistant(last); else render(); };
-    try { r.start(); } catch (e) { state.assistantRec = null; state.assistantListening = false; render(); }
-  }, style: { padding: '0', width: '44px', height: '44px', justifyContent: 'center', fontSize: '17px', flex: '0 0 auto' } }, state.assistantListening ? 'var(--stamp)' : 'var(--paper2)', state.assistantListening ? '#fff' : 'var(--ink)'));
+  if (SR) row.appendChild(h('button', { type: 'button', title: state.assistantListening ? 'Durdur' : 'Konuş', className: state.assistantListening ? 'ai-mic ai-mic-on' : 'ai-mic', onclick: assistantMicToggle }, [ic(state.assistantListening ? 'sparkle' : 'mic', 24)]));
   row.appendChild(btn(['Gönder'], { type: 'button', disabled: state.assistantBusy, onclick: () => { const el = document.getElementById('ai-input'); askAssistant(el ? el.value : state.assistantInput); }, style: { height: '44px', padding: '0 16px', justifyContent: 'center', flex: '0 0 auto' } }, 'var(--accent)', 'var(--on-accent)'));
   box.appendChild(row);
   box.appendChild(h('div', { style: { fontSize: '10.5px', color: 'var(--inkSoft)', marginTop: '6px', textAlign: 'center' } }, 'Değişiklikler sen Uygula\'ya basınca yapılır; öncesinde otomatik yedek alınır.'));
