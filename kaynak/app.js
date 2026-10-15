@@ -1309,7 +1309,7 @@ function assistantData() {
   const monthObj = {}; months.forEach((k) => { monthObj[k] = byMonth[k]; });
   const coTop = Object.keys(byCo).sort((x, y) => byCo[y].tutar - byCo[x].tutar).slice(0, 60);
   const coObj = {}; coTop.forEach((k) => { coObj[k] = byCo[k]; });
-  const recent = list.slice(0, 600).map((s) => [s.seq, s.date, s.company, s.plate, s.driver, s.tonnage === '' || s.tonnage == null ? null : parseFloat(s.tonnage), unitName(s.tonnageUnit), String(s.paintDetails || '').slice(0, 28), hasUnitPrice(s) ? parseFloat(s.unitPrice) : null, isNaN(parseFloat(s.paintCost)) ? null : parseFloat(s.paintCost), costAmount(s) !== null ? R(costAmount(s)) : null, netAmount(s) !== null ? R(netAmount(s)) : null, s.signature ? 1 : 0, s.invoiced ? 1 : 0]);
+  const recent = list.slice(0, 250).map((s) => [s.seq, s.date, s.company, s.plate, s.driver, s.tonnage === '' || s.tonnage == null ? null : parseFloat(s.tonnage), unitName(s.tonnageUnit), String(s.paintDetails || '').slice(0, 28), hasUnitPrice(s) ? parseFloat(s.unitPrice) : null, isNaN(parseFloat(s.paintCost)) ? null : parseFloat(s.paintCost), costAmount(s) !== null ? R(costAmount(s)) : null, netAmount(s) !== null ? R(netAmount(s)) : null, s.signature ? 1 : 0, s.invoiced ? 1 : 0]);
   const quotes = state.quotes.slice(0, 80).map((q) => ({ tarih: q.date, firma: q.company, is: q.work, miktar: q.tonnage, birim: q.tonnageUnit, fiyat: q.price, durum: q.status, not: q.notes }));
   let tutar = 0, net = 0, boya = 0;
   list.forEach((s) => { const a = costAmount(s); if (a !== null) { tutar += a; net += netAmount(s); } const p = parseFloat(s.paintCost); if (!isNaN(p)) boya += p; });
@@ -1459,9 +1459,19 @@ async function assistantTtsStream(t, my) {
   if (buf.trim()) play(buf.trim());
   if (!got) throw new Error('tts-bos');
 }
+function assistantSpeechText(t) {
+  let x = String(t);
+  x = x.replace(/\(Gemini sesi[^)]*\)/g, ' ');
+  x = x.replace(/(\d{1,3}(?:\.\d{3})+)(,\d+)?/g, (m, a, b) => a.replace(/\./g, '') + (b ? ' virgül ' + b.slice(1) : ''));
+  x = x.replace(/(\d+),(\d+)/g, '$1 virgül $2');
+  x = x.replace(/₺|\bTL\b/g, ' lira ').replace(/\bkg\b/gi, ' kilogram ').replace(/m²|\bm2\b/gi, ' metrekare ').replace(/%\s*(\d+)/g, ' yüzde $1 ').replace(/%/g, ' yüzde ');
+  x = x.replace(/\bKDV\b/g, 'kedeve').replace(/[#*_`•→✓🎤\[\]{}<>|]/g, ' ').replace(/\s*[-–—]\s*/g, ', ');
+  x = x.replace(/[A-ZÇĞİÖŞÜ]{2,}/g, (w) => { const l = w.toLocaleLowerCase('tr-TR'); return l.charAt(0).toLocaleUpperCase('tr-TR') + l.slice(1); });
+  return x.replace(/\s+/g, ' ').replace(/\s+([.,!?])/g, '$1').trim();
+}
 function assistantSpeakText(t) {
   if (!state.assistantSpeak || !t) return;
-  const clean = String(t).replace(/[*_#`•→✓]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400);
+  const clean = assistantSpeechText(t).slice(0, 360);
   if (!clean) return;
   assistantStopSpeak();
   const my = AICUR;
@@ -1572,6 +1582,7 @@ async function askAssistant(text, fromVoice) {
   if ((!text && !audio) || state.assistantBusy) return;
   state.assistantMsgs.push({ r: 'u', t: audio ? '🎤 …' : text.split('\n[Sesle')[0] });
   const myMsg = state.assistantMsgs[state.assistantMsgs.length - 1];
+  const tStart = Date.now();
   assistantStopSpeak(); try { if (window.speechSynthesis) window.speechSynthesis.getVoices(); AIX = AIX || new (window.AudioContext || window.webkitAudioContext)(); if (AIX.state === 'suspended') AIX.resume(); } catch (e) {}
   state.assistantBusy = true; state.assistantInput = ''; render();
   let reply = '', opened = false;
@@ -1587,9 +1598,10 @@ async function askAssistant(text, fromVoice) {
     if (res.error || !d) throw new Error('Asistan şu an cevap veremedi.');
     if (d.err) throw new Error(d.err + (d.detay ? ' · ' + (typeof d.detay === 'string' ? d.detay : JSON.stringify(d.detay).slice(0, 120)) : ''));
     reply = d.cevap || d.mesaj || 'Anlayamadım, biraz daha açık yazar mısın?';
+    state.assistantMeta = ((Date.now() - tStart) / 1000).toFixed(1) + ' sn' + (d.ms ? ' (yapay zeka ' + (d.ms / 1000).toFixed(1) + ' sn)' : '');
     if (d.islem === 'uygula' && Array.isArray(d.islemler) && d.islemler.length) {
       state.assistantPending = { ops: d.islemler.slice(0, 200), text };
-      state.assistantMsgs.push({ r: 'a', t: reply });
+      state.assistantMsgs.push({ r: 'a', t: reply, m: state.assistantMeta || '' }); state.assistantMeta = '';
       assistantSave(text, reply); assistantSpeakText(reply);
       state.assistantBusy = false; render();
       return;
@@ -1604,7 +1616,7 @@ async function askAssistant(text, fromVoice) {
       return;
     }
   } catch (e) { reply = (e && e.message) ? e.message : 'Asistan şu an cevap veremedi.'; if (audio && myMsg.t === '🎤 …') myMsg.t = '🎤 (ses gönderilemedi)'; }
-  state.assistantMsgs.push({ r: 'a', t: reply });
+  state.assistantMsgs.push({ r: 'a', t: reply, m: state.assistantMeta || '' }); state.assistantMeta = '';
   assistantSpeakText(reply);
   if (!/cevap veremedi|internet|yoğun|Yetkisiz/.test(reply)) assistantSave(text, reply);
   state.assistantBusy = false; render();
@@ -1623,7 +1635,7 @@ function renderAssistantModal() {
   const log = h('div', { id: 'ai-log', style: { overflowY: 'auto', flex: '1', minHeight: '28vh', maxHeight: '52vh', padding: '2px', display: 'flex', flexDirection: 'column', gap: '8px' } });
   state.assistantMsgs.forEach((m) => {
     const me = m.r === 'u';
-    log.appendChild(h('div', { style: { alignSelf: me ? 'flex-end' : 'flex-start', maxWidth: '86%', padding: '9px 12px', borderRadius: me ? '14px 14px 4px 14px' : '14px 14px 14px 4px', background: me ? 'var(--accent)' : 'var(--cream)', color: me ? 'var(--on-accent)' : 'var(--ink)', border: me ? 'none' : '1.5px solid var(--line)', fontSize: '13.5px', lineHeight: '1.45', whiteSpace: 'pre-wrap' } }, m.t));
+    log.appendChild(h('div', { style: { alignSelf: me ? 'flex-end' : 'flex-start', maxWidth: '86%', padding: '9px 12px', borderRadius: me ? '14px 14px 4px 14px' : '14px 14px 14px 4px', background: me ? 'var(--accent)' : 'var(--cream)', color: me ? 'var(--on-accent)' : 'var(--ink)', border: me ? 'none' : '1.5px solid var(--line)', fontSize: '13.5px', lineHeight: '1.45', whiteSpace: 'pre-wrap' } }, m.m ? [m.t, h('div', { style: { fontSize: '10px', opacity: '.55', marginTop: '3px' } }, '⏱ ' + m.m)] : m.t));
   });
   if (state.assistantBusy) log.appendChild(h('div', { style: { alignSelf: 'flex-start', padding: '9px 12px', borderRadius: '14px', background: 'var(--cream)', border: '1.5px solid var(--line)', color: 'var(--inkSoft)', fontSize: '13px' } }, 'Düşünüyor…'));
   box.appendChild(log);
