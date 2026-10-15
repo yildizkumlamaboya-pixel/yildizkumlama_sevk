@@ -1006,7 +1006,7 @@ const state = {
     lossPct: '', tinerPct: '', astarPrice: '275', sonkatPrice: '290', tinerPrice: '145', profitPct: '15', laborDiscountPct: '0',
   },
   paintCalcPricesOpen: false, paintCalcPdfBusy: false,
-  assistantOpen: false, assistantMsgs: [], assistantSpeak: (() => { try { return localStorage.getItem('sevkiyat_ai_ses') !== '0'; } catch (e) { return true; } })(), assistantLive: '', assistantBusy: false, assistantPending: null, assistantInput: '', assistantRec: null, assistantListening: false,
+  assistantOpen: false, assistantMsgs: [], assistantSpeak: (() => { try { return localStorage.getItem('sevkiyat_ai_ses') !== '0'; } catch (e) { return true; } })(), assistantLive: '', assistantRecorder: null, assistantBusy: false, assistantPending: null, assistantInput: '', assistantRec: null, assistantListening: false,
   autoBackups: [], autoBackupBusy: false, autoBackupError: '', autoRestoreDay: '',
   cloudSyncing: false, lastSyncAt: null, cloudLastError: '',
   pendingDeletions: (() => { try { return JSON.parse(localStorage.getItem('sevkiyat_pending_deletions') || '[]'); } catch (e) { return []; } })(),
@@ -1416,18 +1416,60 @@ async function applyAssistantOps() {
   state.assistantBusy = false; render();
 }
 
-function assistantStopSpeak() { try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {} }
-function assistantSpeakText(t) {
-  if (!state.assistantSpeak || !window.speechSynthesis || !t) return;
+let AIX = null, AISRC = [], AIABR = null, AICUR = 0, AIFAIL = 0, AIAUD = null;
+const AICACHE = new Map();
+function assistantStopSpeak() {
+  try { AICUR++; if (AIABR) { AIABR.abort(); AIABR = null; } AISRC.forEach((x) => { try { x.onended = null; x.stop(); } catch (e) {} }); AISRC = []; } catch (e) {}
+  try { if (AIAUD) { AIAUD.onended = null; AIAUD.pause(); AIAUD = null; } } catch (e) {}
+  try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
+}
+function assistantBrowserVoice(t) {
   try {
-    const ss = window.speechSynthesis; ss.cancel();
-    const clean = String(t).replace(/[*_#`•→✓]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 600);
-    const u = new SpeechSynthesisUtterance(clean);
-    u.lang = 'tr-TR'; u.rate = 1.05;
-    const v = (ss.getVoices() || []).find((x) => /tr[-_]TR/i.test(x.lang));
-    if (v) u.voice = v;
+    const ss = window.speechSynthesis; if (!ss) return;
+    ss.cancel();
+    const L = (ss.getVoices() || []).filter((v) => /^tr/i.test(v.lang));
+    const male = L.find((v) => /tolga|cem\b|ahmet|yusuf|emre|erkek|\bmale\b|-ama-|-tmc-|-tmd-/i.test(v.name + ' ' + v.voiceURI) && !/female|kad[ıi]n|filiz|seda|yelda|emel/i.test(v.name));
+    const v = male || L.find((x) => /google|microsoft|enhanced|premium|neural/i.test(x.name)) || L[0];
+    const u = new SpeechSynthesisUtterance(t); u.lang = 'tr-TR'; if (v) u.voice = v; u.rate = 1.1; u.pitch = male ? 0.95 : 0.72;
     ss.speak(u);
   } catch (e) {}
+}
+async function assistantTtsStream(t, my) {
+  AIABR = new AbortController();
+  const r = await fetch(SUPABASE_URL + '/functions/v1/ai-sevkiyat', { method: 'POST', signal: AIABR.signal, headers: { apikey: SUPABASE_PUBLISHABLE_KEY, Authorization: 'Bearer ' + SUPABASE_PUBLISHABLE_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify({ tts: t, stream: true }) });
+  if (!r.ok || !r.body || /json/.test(r.headers.get('content-type') || '')) throw new Error('tts');
+  AIX = AIX || new (window.AudioContext || window.webkitAudioContext)();
+  if (AIX.state === 'suspended') AIX.resume();
+  const rd = r.body.getReader(), dec = new TextDecoder();
+  let buf = '', next = 0, got = 0;
+  const play = (b64) => {
+    const bin = atob(b64), n = bin.length >> 1; if (!n) return;
+    const f = new Float32Array(n);
+    for (let k = 0; k < n; k++) { let v = bin.charCodeAt(2 * k) | (bin.charCodeAt(2 * k + 1) << 8); if (v > 32767) v -= 65536; f[k] = v / 32768; }
+    const ab = AIX.createBuffer(1, n, 24000); ab.copyToChannel(f, 0);
+    const sr = AIX.createBufferSource(); sr.buffer = ab; sr.connect(AIX.destination);
+    const st = Math.max(next, AIX.currentTime + 0.03); sr.start(st); next = st + ab.duration; AISRC.push(sr); got++;
+  };
+  for (;;) {
+    const { done, value } = await rd.read(); if (done) break;
+    if (my !== AICUR) return;
+    buf += dec.decode(value, { stream: true });
+    let i; while ((i = buf.indexOf('\n')) >= 0) { const ln = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (ln) play(ln); }
+  }
+  if (buf.trim()) play(buf.trim());
+  if (!got) throw new Error('tts-bos');
+}
+function assistantSpeakText(t) {
+  if (!state.assistantSpeak || !t) return;
+  const clean = String(t).replace(/[*_#`•→✓]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400);
+  if (!clean) return;
+  assistantStopSpeak();
+  const my = AICUR;
+  if (AIFAIL >= 3 || !window.AudioContext && !window.webkitAudioContext) { assistantBrowserVoice(clean); return; }
+  assistantTtsStream(clean, my).then(() => { AIFAIL = 0; }).catch((e) => {
+    if (my !== AICUR) return;
+    AIFAIL++; assistantBrowserVoice(clean);
+  });
 }
 function assistantToggleSpeak() {
   state.assistantSpeak = !state.assistantSpeak;
@@ -1449,7 +1491,7 @@ function assistantFixSpeech(text, alts, companies) {
   const others = (alts || []).filter((x) => x && x !== best).slice(0, 4);
   return best + (others.length ? '\n[Sesle söylendi, yanlış duyulmuş olabilir. Diğer olası duyumlar: ' + others.join(' | ') + '. Firma adı gibi duyulan kelimeyi Firmalar listesindeki en yakın firmayla eşleştir.]' : '\n[Sesle söylendi; firma adlarını Firmalar listesindeki en yakın yazımla eşleştir.]');
 }
-function assistantMicToggle() {
+function assistantMicSR() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return;
   assistantStopSpeak();
@@ -1474,10 +1516,57 @@ function assistantMicToggle() {
   };
   try { r.start(); } catch (e) { state.assistantRec = null; state.assistantListening = false; render(); }
 }
+
+function assistantMicToggle() {
+  if (state.assistantRecorder) { try { state.assistantRecorder.stop(); } catch (e) {} return; }
+  if (state.assistantRec) { try { state.assistantRec.stop(); } catch (e) {} return; }
+  if (!(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) { assistantMicSR(); return; }
+  assistantStopSpeak();
+  try { AIX = AIX || new (window.AudioContext || window.webkitAudioContext)(); if (AIX.state === 'suspended') AIX.resume(); } catch (e) {}
+  navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }).then((stream) => {
+    const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+    const mime = types.find((m) => { try { return MediaRecorder.isTypeSupported(m); } catch (e) { return false; } }) || '';
+    let rec; try { rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream); } catch (e) { stream.getTracks().forEach((x) => x.stop()); assistantMicSR(); return; }
+    const chunks = []; let spoke = false, lastVoice = 0, t0 = Date.now(), timer = null, an = null, src = null, ctx2 = null, cancelled = false;
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = () => {
+      clearInterval(timer); stream.getTracks().forEach((x) => x.stop());
+      try { src && src.disconnect(); ctx2 && ctx2.close(); } catch (e) {}
+      state.assistantRecorder = null; state.assistantListening = false; state.assistantLive = '';
+      if (cancelled || !spoke || !chunks.length) { render(); return; }
+      const blob = new Blob(chunks, { type: rec.mimeType || mime || 'audio/webm' });
+      const fr = new FileReader();
+      fr.onload = () => { const b64 = String(fr.result).split(',')[1] || ''; askAssistant('', { ses: b64, tip: blob.type || 'audio/webm' }); };
+      fr.readAsDataURL(blob);
+    };
+    try {
+      ctx2 = new (window.AudioContext || window.webkitAudioContext)(); src = ctx2.createMediaStreamSource(stream); an = ctx2.createAnalyser(); an.fftSize = 1024; src.connect(an);
+    } catch (e) { an = null; }
+    const data = an ? new Uint8Array(an.fftSize) : null;
+    timer = setInterval(() => {
+      const now = Date.now();
+      if (an) {
+        an.getByteTimeDomainData(data); let sum = 0; for (let k = 0; k < data.length; k++) { const v = (data[k] - 128) / 128; sum += v * v; }
+        const rms = Math.sqrt(sum / data.length);
+        if (rms > 0.03) { spoke = true; lastVoice = now; }
+        const el = document.getElementById('ai-live'); if (el && !spoke) el.textContent = 'Dinliyorum… konuş'; else if (el) el.textContent = rms > 0.03 ? 'Dinliyorum…' : 'Dinliyorum… (bitirince dur)';
+        if (spoke && now - lastVoice > 1400) { try { rec.stop(); } catch (e) {} }
+        else if (!spoke && now - t0 > 7000) { cancelled = true; try { rec.stop(); } catch (e) {} }
+      } else if (now - t0 > 6000) { spoke = true; try { rec.stop(); } catch (e) {} }
+      if (now - t0 > 25000) { try { rec.stop(); } catch (e) {} }
+    }, 100);
+    state.assistantRecorder = rec; state.assistantListening = true; state.assistantLive = ''; render();
+    rec.start(250);
+  }).catch(() => {
+    state.assistantMsgs.push({ r: 'a', t: 'Mikrofon izni verilmedi. Ayarlardan bu uygulamaya mikrofon izni ver.' }); render();
+  });
+}
 async function askAssistant(text, fromVoice) {
   text = String(text || '').trim();
-  if (!text || state.assistantBusy) return;
-  state.assistantMsgs.push({ r: 'u', t: text.split('\n[Sesle')[0] });
+  const audio = fromVoice && fromVoice.ses ? fromVoice : null;
+  if ((!text && !audio) || state.assistantBusy) return;
+  state.assistantMsgs.push({ r: 'u', t: audio ? '🎤 …' : text.split('\n[Sesle')[0] });
+  const myMsg = state.assistantMsgs[state.assistantMsgs.length - 1];
   assistantStopSpeak(); try { if (window.speechSynthesis) window.speechSynthesis.getVoices(); } catch (e) {}
   state.assistantBusy = true; state.assistantInput = ''; render();
   let reply = '', opened = false;
@@ -1485,8 +1574,11 @@ async function askAssistant(text, fromVoice) {
     if (!supabaseClient) throw new Error('Asistan için internet ve bulut bağlantısı gerekir.');
     const companies = Array.from(new Set(state.shipments.map((s) => s.company).filter(Boolean))).slice(0, 150);
     const hist = assistantLog().flatMap((x) => [{ r: 'u', t: x.u }, { r: 'a', t: x.a }]);
-    const res = await supabaseClient.functions.invoke('ai-sevkiyat', { body: { metin: text, firmalar: companies, bugun: todayISO(), veri: assistantData(), gecmis: hist } });
+    const body = { metin: text, firmalar: companies, bugun: todayISO(), veri: assistantData(), gecmis: hist };
+    if (audio) { body.ses = audio.ses; body.sesTip = audio.tip; }
+    const res = await supabaseClient.functions.invoke('ai-sevkiyat', { body });
     const d = res && res.data;
+    if (audio) { text = (d && d.duyulan) ? String(d.duyulan).trim() : ''; myMsg.t = text ? '🎤 ' + text : '🎤 (ses)'; }
     if (res.error || !d) throw new Error('Asistan şu an cevap veremedi.');
     if (d.err) throw new Error(d.err + (d.detay ? ' · ' + (typeof d.detay === 'string' ? d.detay : JSON.stringify(d.detay).slice(0, 120)) : ''));
     reply = d.cevap || d.mesaj || 'Anlayamadım, biraz daha açık yazar mısın?';
@@ -1506,7 +1598,7 @@ async function askAssistant(text, fromVoice) {
       if (!opened) { state.assistantMsgs.push({ r: 'a', t: 'Bu ekranı açamadım.' }); render(); }
       return;
     }
-  } catch (e) { reply = (e && e.message) ? e.message : 'Asistan şu an cevap veremedi.'; }
+  } catch (e) { reply = (e && e.message) ? e.message : 'Asistan şu an cevap veremedi.'; if (audio && myMsg.t === '🎤 …') myMsg.t = '🎤 (ses gönderilemedi)'; }
   state.assistantMsgs.push({ r: 'a', t: reply });
   assistantSpeakText(reply);
   if (!/cevap veremedi|internet|yoğun|Yetkisiz/.test(reply)) assistantSave(text, reply);
@@ -1552,7 +1644,7 @@ function renderAssistantModal() {
   ta.value = state.assistantInput || '';
   row.appendChild(ta);
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (SR) row.appendChild(h('button', { type: 'button', title: state.assistantListening ? 'Durdur' : 'Konuş', className: state.assistantListening ? 'ai-mic ai-mic-on' : 'ai-mic', onclick: assistantMicToggle }, [ic(state.assistantListening ? 'sparkle' : 'mic', 24)]));
+  if (SR || window.MediaRecorder) row.appendChild(h('button', { type: 'button', title: state.assistantListening ? 'Durdur' : 'Konuş', className: state.assistantListening ? 'ai-mic ai-mic-on' : 'ai-mic', onclick: assistantMicToggle }, [ic(state.assistantListening ? 'sparkle' : 'mic', 24)]));
   row.appendChild(btn(['Gönder'], { type: 'button', disabled: state.assistantBusy, onclick: () => { const el = document.getElementById('ai-input'); askAssistant(el ? el.value : state.assistantInput); }, style: { height: '44px', padding: '0 16px', justifyContent: 'center', flex: '0 0 auto' } }, 'var(--accent)', 'var(--on-accent)'));
   box.appendChild(row);
   box.appendChild(h('div', { style: { fontSize: '10.5px', color: 'var(--inkSoft)', marginTop: '6px', textAlign: 'center' } }, 'Değişiklikler sen Uygula\'ya basınca yapılır; öncesinde otomatik yedek alınır.'));
