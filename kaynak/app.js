@@ -28,6 +28,7 @@ function icon(svgInner, size) {
   return span;
 }
 const ICONS = {
+  sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z"/>',
   truck: '<path d="M14 18V6a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h1"/><path d="M14 9h4l4 4v4a1 1 0 0 1-1 1h-2"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
@@ -1002,6 +1003,7 @@ const state = {
     lossPct: '', tinerPct: '', astarPrice: '275', sonkatPrice: '290', tinerPrice: '145', profitPct: '15', laborDiscountPct: '0',
   },
   paintCalcPricesOpen: false, paintCalcPdfBusy: false,
+  assistantOpen: false, assistantMsgs: [], assistantBusy: false, assistantInput: '', assistantRec: null, assistantListening: false,
   autoBackups: [], autoBackupBusy: false, autoBackupError: '', autoRestoreDay: '',
   cloudSyncing: false, lastSyncAt: null, cloudLastError: '',
   pendingDeletions: (() => { try { return JSON.parse(localStorage.getItem('sevkiyat_pending_deletions') || '[]'); } catch (e) { return []; } })(),
@@ -1277,6 +1279,145 @@ function buildAutoBackupBox(container) {
   }
   box.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--inkSoft)', lineHeight: '1.5', marginTop: '6px' } }, (supabaseClient ? 'Yedekler bulutta saklanır; telefon kaybolsa veya uygulama silinse de kalır. İnternet yokken alınan yedek geçici olarak cihazda tutulur.' : 'Bulut bağlı değil: yedekler telefonun içinde saklanır, uygulama silinirse onlar da gider.')));
   container.appendChild(box);
+}
+
+
+/* ============================== yapay zeka asistanı (Gemini) ============================== */
+function assistantData() {
+  const R = (v) => Math.round(v * 100) / 100;
+  const list = state.shipments;
+  const byCo = {}, byMonth = {};
+  const unitName = (u) => (u === 'm2' ? 'm²' : (u || 'kg'));
+  let noPrice = 0, noSign = 0, noInvoice = 0, noQty = 0;
+  list.forEach((s) => {
+    const co = s.company || '—';
+    const o = byCo[co] || (byCo[co] = { sevkiyat: 0, miktar: {}, tutar: 0, boyaMaliyeti: 0, net: 0, faturasiz: 0 });
+    o.sevkiyat++;
+    const q = parseFloat(s.tonnage);
+    if (!isNaN(q)) { const u = unitName(s.tonnageUnit); o.miktar[u] = R((o.miktar[u] || 0) + q); } else noQty++;
+    const a = costAmount(s);
+    if (a !== null) { o.tutar = R(o.tutar + a); o.net = R(o.net + netAmount(s)); const p = parseFloat(s.paintCost); if (!isNaN(p)) o.boyaMaliyeti = R(o.boyaMaliyeti + p); } else noPrice++;
+    if (!s.invoiced) { o.faturasiz++; noInvoice++; }
+    if (!s.signature) noSign++;
+    const mk = (s.date || '').slice(0, 7);
+    if (mk) { const m = byMonth[mk] || (byMonth[mk] = { sevkiyat: 0, tutar: 0, net: 0 }); m.sevkiyat++; if (a !== null) { m.tutar = R(m.tutar + a); m.net = R(m.net + netAmount(s)); } }
+  });
+  const months = Object.keys(byMonth).sort().reverse().slice(0, 14);
+  const monthObj = {}; months.forEach((k) => { monthObj[k] = byMonth[k]; });
+  const coTop = Object.keys(byCo).sort((x, y) => byCo[y].tutar - byCo[x].tutar).slice(0, 60);
+  const coObj = {}; coTop.forEach((k) => { coObj[k] = byCo[k]; });
+  const recent = list.slice(0, 25).map((s) => ({ no: s.seq, tarih: s.date, firma: s.company, plaka: s.plate, sofor: s.driver, miktar: s.tonnage ? (s.tonnage + ' ' + unitName(s.tonnageUnit)) : '', detay: s.paintDetails || '', birimFiyat: hasUnitPrice(s) ? parseFloat(s.unitPrice) : null, tutarKdvHaric: costAmount(s) !== null ? R(costAmount(s)) : null, net: netAmount(s) !== null ? R(netAmount(s)) : null, imzali: !!s.signature, faturaKesildi: !!s.invoiced }));
+  let tutar = 0, net = 0, boya = 0;
+  list.forEach((s) => { const a = costAmount(s); if (a !== null) { tutar += a; net += netAmount(s); } const p = parseFloat(s.paintCost); if (!isNaN(p)) boya += p; });
+  return {
+    genel: { toplamSevkiyat: list.length, toplamTutarKdvHaric: R(tutar), kdvDahilToplam: R(withVat(tutar)), toplamBoyaMaliyeti: R(boya), toplamNet: R(net), fiyatiGirilmemis: noPrice, miktarsiz: noQty, imzasiz: noSign, faturasiz: noInvoice, copKutusunda: state.trash.length, teklifSayisi: state.quotes.length },
+    firmalar: coObj, aylar: monthObj, sonSevkiyatlar: recent,
+  };
+}
+function assistantLog() { try { return JSON.parse(localStorage.getItem('sevkiyat_ai_son') || '[]').filter((x) => x && x.u && x.a).slice(-5); } catch (e) { return []; } }
+function assistantSave(u, a) { try { const L = assistantLog(); L.push({ u, a }); localStorage.setItem('sevkiyat_ai_son', JSON.stringify(L.slice(-5))); } catch (e) {} }
+function openAssistant() {
+  state.navMenuOpen = false; state.assistantOpen = true;
+  if (!state.assistantMsgs.length) {
+    state.assistantMsgs = [{ r: 'a', t: 'Merhaba! Sevkiyatlar, tutarlar ve net hakkında soru sorabilir ya da "Say\'a 861 kg kumlama yeni sevkiyat aç" diyebilirsin.' }];
+  }
+  render();
+}
+function assistantOpenTarget(o) {
+  const nav = { ekran_liste: 'list', ekran_gorevler: 'tasks', ekran_maliyet: 'cost', ekran_ozet: 'summary', ekran_boya_hesap: 'paintcalc', ekran_fiyatlar: 'prices', ekran_teklifler: 'quotes', ekran_cop: 'trash' };
+  if (o.hedef === 'yedekleme') { state.assistantOpen = false; state.uiExpanded.backup = true; render(); return true; }
+  if (nav[o.hedef]) { state.assistantOpen = false; gotoTab(nav[o.hedef]); return true; }
+  if (o.hedef === 'yeni_sevkiyat') {
+    const f = emptyForm();
+    const co = o.firma ? (state.shipments.map((s) => s.company).find((c) => trNormalize(c) === trNormalize(o.firma)) || state.shipments.map((s) => s.company).find((c) => c && (trNormalize(c).includes(trNormalize(o.firma)) || trNormalize(o.firma).includes(trNormalize(c)))) || o.firma) : '';
+    if (co) f.company = co;
+    if (o.plaka) f.plate = String(o.plaka).toLocaleUpperCase('tr-TR');
+    if (o.sofor) f.driver = String(o.sofor);
+    if (o.tarih && /^\d{4}-\d{2}-\d{2}$/.test(o.tarih)) f.date = o.tarih;
+    if (o.miktar && !isNaN(parseFloat(o.miktar)) && parseFloat(o.miktar) > 0) { f.tonnage = String(o.miktar); f.tonnageUnit = ['kg', 'ton', 'm2', 'adet'].indexOf(o.birim) >= 0 ? o.birim : 'kg'; }
+    if (o.aciklama) f.paintDetails = String(o.aciklama).toLocaleUpperCase('tr-TR');
+    const last = f.company ? lastRecordOfCompany(f.company) : null;
+    if (last && !f.paintDetails && last.paintDetails) f.paintDetails = last.paintDetails;
+    if (f.plate && !f.driver) {
+      const key = trNormalize(f.plate).replace(/\s+/g, '');
+      const hit = state.shipments.find((x) => trNormalize(x.plate).replace(/\s+/g, '') === key);
+      if (hit) { f.driver = hit.driver || ''; f.driverPhone = hit.driverPhone || ''; f.driverTC = hit.driverTC || ''; if (!f.company) f.company = hit.company || ''; }
+    }
+    state.form = f; state.editingId = null; state.error = ''; state.assistantOpen = false;
+    goTo('form'); render(); window.scrollTo(0, 0);
+    return true;
+  }
+  return false;
+}
+async function askAssistant(text) {
+  text = String(text || '').trim();
+  if (!text || state.assistantBusy) return;
+  state.assistantMsgs.push({ r: 'u', t: text });
+  state.assistantBusy = true; state.assistantInput = ''; render();
+  let reply = '', opened = false;
+  try {
+    if (!supabaseClient) throw new Error('Asistan için internet ve bulut bağlantısı gerekir.');
+    const companies = Array.from(new Set(state.shipments.map((s) => s.company).filter(Boolean))).slice(0, 150);
+    const hist = assistantLog().flatMap((x) => [{ r: 'u', t: x.u }, { r: 'a', t: x.a }]);
+    const res = await supabaseClient.functions.invoke('ai-sevkiyat', { body: { metin: text, firmalar: companies, bugun: todayISO(), veri: assistantData(), gecmis: hist } });
+    const d = res && res.data;
+    if (res.error || !d) throw new Error('Asistan şu an cevap veremedi.');
+    if (d.err) throw new Error(d.err + (d.detay ? ' · ' + (typeof d.detay === 'string' ? d.detay : JSON.stringify(d.detay).slice(0, 120)) : ''));
+    reply = d.cevap || d.mesaj || 'Anlayamadım, biraz daha açık yazar mısın?';
+    if (d.islem === 'ac') {
+      if (state.pinEnabled === false || true) { /* yetki: sadece form açılır, kayıt kullanıcıdadır */ }
+      state.assistantMsgs.push({ r: 'a', t: reply });
+      assistantSave(text, reply);
+      state.assistantBusy = false;
+      opened = assistantOpenTarget(d);
+      if (!opened) { state.assistantMsgs.push({ r: 'a', t: 'Bu ekranı açamadım.' }); render(); }
+      return;
+    }
+  } catch (e) { reply = (e && e.message) ? e.message : 'Asistan şu an cevap veremedi.'; }
+  state.assistantMsgs.push({ r: 'a', t: reply });
+  if (!/cevap veremedi|internet|yoğun|Yetkisiz/.test(reply)) assistantSave(text, reply);
+  state.assistantBusy = false; render();
+  setTimeout(() => { const L = document.getElementById('ai-log'); if (L) L.scrollTop = L.scrollHeight; }, 30);
+}
+function renderAssistantModal() {
+  const overlay = h('div', { style: { position: 'fixed', inset: '0', background: 'rgba(17,24,39,.55)', zIndex: '70', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }, onclick: () => { state.assistantOpen = false; render(); } });
+  const box = h('div', { onclick: (e) => e.stopPropagation(), style: { background: 'var(--paper)', width: '100%', maxWidth: '560px', borderRadius: '22px 22px 0 0', padding: '14px 14px calc(14px + env(safe-area-inset-bottom))', boxShadow: '0 -12px 40px rgba(0,0,0,.3)', display: 'flex', flexDirection: 'column', maxHeight: '86vh' } });
+  box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' } }, [
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: '7px', fontWeight: '800', fontSize: '15px' } }, [ic('sparkle', 17, 'var(--accent)'), ' Asistan']),
+    h('span', { onclick: () => { state.assistantOpen = false; render(); }, style: { cursor: 'pointer', color: 'var(--inkSoft)', fontWeight: '700', padding: '4px 6px', fontSize: '16px' } }, '✕'),
+  ]));
+  const log = h('div', { id: 'ai-log', style: { overflowY: 'auto', flex: '1', minHeight: '28vh', maxHeight: '52vh', padding: '2px', display: 'flex', flexDirection: 'column', gap: '8px' } });
+  state.assistantMsgs.forEach((m) => {
+    const me = m.r === 'u';
+    log.appendChild(h('div', { style: { alignSelf: me ? 'flex-end' : 'flex-start', maxWidth: '86%', padding: '9px 12px', borderRadius: me ? '14px 14px 4px 14px' : '14px 14px 14px 4px', background: me ? 'var(--accent)' : 'var(--cream)', color: me ? 'var(--on-accent)' : 'var(--ink)', border: me ? 'none' : '1.5px solid var(--line)', fontSize: '13.5px', lineHeight: '1.45', whiteSpace: 'pre-wrap' } }, m.t));
+  });
+  if (state.assistantBusy) log.appendChild(h('div', { style: { alignSelf: 'flex-start', padding: '9px 12px', borderRadius: '14px', background: 'var(--cream)', border: '1.5px solid var(--line)', color: 'var(--inkSoft)', fontSize: '13px' } }, 'Düşünüyor…'));
+  box.appendChild(log);
+  if (state.assistantMsgs.length <= 1) {
+    const sug = h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', margin: '8px 0 2px' } });
+    ['Bu ay toplam tutar ne kadar?', 'En çok iş yaptığımız firma hangisi?', 'Faturası kesilmemiş kaç sevkiyat var?'].forEach((q) => sug.appendChild(h('button', { type: 'button', onclick: () => askAssistant(q), style: { border: '1.5px solid var(--line)', background: 'var(--cream)', color: 'var(--ink)', borderRadius: '999px', padding: '6px 11px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' } }, q)));
+    box.appendChild(sug);
+  }
+  const row = h('div', { style: { display: 'flex', gap: '8px', marginTop: '10px', alignItems: 'flex-end' } });
+  const ta = h('textarea', { id: 'ai-input', rows: 2, className: 'input', placeholder: 'Sorunu veya yapmak istediğini yaz…', style: { flex: '1', resize: 'none', fontFamily: "'Inter',sans-serif", fontSize: '14px' }, oninput: (e) => { state.assistantInput = e.target.value; }, onkeydown: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askAssistant(e.target.value); } } });
+  ta.value = state.assistantInput || '';
+  row.appendChild(ta);
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SR) row.appendChild(btn([state.assistantListening ? '■' : '🎤'], { type: 'button', title: 'Sesle yaz', onclick: () => {
+    if (state.assistantRec) { try { state.assistantRec.stop(); } catch (e) {} return; }
+    const r = new SR(); r.lang = 'tr-TR'; r.interimResults = true; r.continuous = false; state.assistantRec = r; state.assistantListening = true; render();
+    let last = '';
+    r.onresult = (e) => { let t = ''; for (const x of e.results) t += x[0].transcript; last = t; const el = document.getElementById('ai-input'); if (el) el.value = t; state.assistantInput = t; };
+    r.onerror = () => { state.assistantRec = null; state.assistantListening = false; render(); };
+    r.onend = () => { state.assistantRec = null; state.assistantListening = false; if (last.trim()) askAssistant(last); else render(); };
+    try { r.start(); } catch (e) { state.assistantRec = null; state.assistantListening = false; render(); }
+  }, style: { padding: '0', width: '44px', height: '44px', justifyContent: 'center', fontSize: '17px', flex: '0 0 auto' } }, state.assistantListening ? 'var(--stamp)' : 'var(--paper2)', state.assistantListening ? '#fff' : 'var(--ink)'));
+  row.appendChild(btn(['Gönder'], { type: 'button', disabled: state.assistantBusy, onclick: () => { const el = document.getElementById('ai-input'); askAssistant(el ? el.value : state.assistantInput); }, style: { height: '44px', padding: '0 16px', justifyContent: 'center', flex: '0 0 auto' } }, 'var(--accent)', 'var(--on-accent)'));
+  box.appendChild(row);
+  box.appendChild(h('div', { style: { fontSize: '10.5px', color: 'var(--inkSoft)', marginTop: '6px', textAlign: 'center' } }, 'Asistan kayıt yapmaz; form açar, kaydı sen onaylarsın. Cevapları önemli işlerde kontrol et.'));
+  overlay.appendChild(box);
+  setTimeout(() => { const L = document.getElementById('ai-log'); if (L) L.scrollTop = L.scrollHeight; }, 20);
+  return overlay;
 }
 
 function daysSince(ts) { return Math.floor((Date.now() - ts) / 86400000); }
@@ -4230,6 +4371,7 @@ function render() {
   if (state.showPasteRestore) app.appendChild(renderPasteRestoreModal());
   if (state.pendingCostEdit) app.appendChild(renderCostEditModal());
   if (state.uiExpanded.backup) app.appendChild(renderBackupMenu());
+  if (state.assistantOpen) app.appendChild(renderAssistantModal());
   if (showNav) app.appendChild(renderBottomNav());
   if (state.navMenuOpen) app.appendChild(renderNavMenu());
 }
@@ -4283,6 +4425,7 @@ function renderNavMenu() {
   sheet.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px', fontSize: '12.5px', fontWeight: '600', color: 'var(--inkSoft)', margin: '-2px 0 12px' } }, [h('span', { style: { width: '8px', height: '8px', borderRadius: '50%', background: supabaseClient ? 'var(--signed)' : 'var(--inkSoft)', display: 'inline-block' } }), getSyncLabel()]));
   const grid = h('div', { className: 'sheetgrid' });
   const tile = (label, iconName, onclick, on, badge) => h('div', { className: 'tile' + (on ? ' on' : ''), onclick }, [ic(iconName, 24), label, badge ? h('span', { className: 'bdg' }, String(badge)) : null]);
+  grid.appendChild(tile('Asistan', 'sparkle', () => openAssistant(), false));
   NAV_ITEMS.filter((it) => ['prices', 'quotes', 'summary', 'paintcalc', 'trash'].indexOf(it.view) >= 0).forEach((it) => {
     grid.appendChild(tile(it.label, it.icon, () => gotoTab(it.view), state.view === it.view, it.badge ? it.badge() : 0));
   });
