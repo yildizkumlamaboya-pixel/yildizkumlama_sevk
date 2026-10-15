@@ -987,7 +987,7 @@ const state = {
   selectedId: null, editingId: null, error: '', successMsg: '',
   saving: false, pdfBusy: false, bulkPdfBusy: false, restoreBusy: false, backupBusy: false, backupProgress: '', excelBackupBusy: false, pdfBackupBusy: false, pdfBackupPending: false,
   pendingRestore: null, form: emptyForm(), storageInfo: { usage: 0, quota: 0, supported: false, persistent: null },
-  pendingDelete: null,
+  pendingDelete: null, pendingInvoice: null,
   lastBackupAt: Number(localStorage.getItem('sevkiyat_last_backup')) || null,
   suppressBackupPrompt: localStorage.getItem('sevkiyat_suppress_backup_prompt') === '1',
   pendingBackupPrompt: false,
@@ -3130,6 +3130,7 @@ function handleBackIntent() {
   if (state.uiExpanded.backup) { state.uiExpanded.backup = false; render(); return true; }
   if (state.navMenuOpen) { state.navMenuOpen = false; render(); return true; }
   if (state.pendingCostEdit) { state.pendingCostEdit = null; render(); return true; }
+  if (state.pendingInvoice) { state.pendingInvoice = null; render(); return true; }
   if (state.pendingDelete) { state.pendingDelete = null; render(); return true; }
   if (state.pendingRestore) { state.pendingRestore = null; render(); return true; }
   if (state.pendingBackupPrompt) { state.pendingBackupPrompt = false; render(); return true; }
@@ -3909,13 +3910,43 @@ function openCostEdit(s) {
   });
   render();
 }
-async function markInvoiced(s) {
-  const idx = state.shipments.findIndex((x) => x.id === s.id);
-  if (idx === -1) return;
-  const updated = Object.assign({}, state.shipments[idx], { invoiced: true, updatedAt: Date.now() });
-  try { await dbPut(updated); if (supabaseClient) cloudPushShipment(updated).catch(() => {}); updated._searchIdx = computeSearchIndex(updated); state.shipments[idx] = updated; }
-  catch (e) { state.error = 'Kaydedilemedi.'; }
+function markInvoiced(s) {
+  state.pendingInvoice = { ids: [s.id], label: '#' + String(s.seq).padStart(4, '0') + ' — ' + (s.company || '(FİRMASIZ)') };
   render();
+}
+function markAllInvoiced() {
+  const t = computeTasks();
+  if (!t.ready.length) return;
+  const total = t.ready.reduce((sum, x) => sum + (costAmount(x) || 0), 0);
+  state.pendingInvoice = { ids: t.ready.map((x) => x.id), label: t.ready.length + ' kayıt', total };
+  render();
+}
+async function confirmInvoiced() {
+  const P = state.pendingInvoice; if (!P) return;
+  state.pendingInvoice = null;
+  for (const id of P.ids) {
+    const idx = state.shipments.findIndex((x) => x.id === id);
+    if (idx === -1) continue;
+    const updated = Object.assign({}, state.shipments[idx], { invoiced: true, updatedAt: Date.now() });
+    try { await dbPut(updated); if (supabaseClient) cloudPushShipment(updated).catch(() => {}); updated._searchIdx = computeSearchIndex(updated); state.shipments[idx] = updated; }
+    catch (e) { state.error = 'Kaydedilemedi.'; }
+  }
+  if (P.ids.length > 1 && !state.error) { state.successMsg = P.ids.length + ' kayıt "fatura kesildi" yapıldı.'; setTimeout(() => { state.successMsg = ''; render(); }, 5000); }
+  render();
+}
+function renderInvoiceModal() {
+  const P = state.pendingInvoice;
+  const overlay = h('div', { style: { position: 'fixed', inset: '0', background: 'rgba(43,42,40,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', zIndex: '50' }, onclick: () => { state.pendingInvoice = null; render(); } });
+  const box = h('div', { onclick: (e) => e.stopPropagation(), style: { background: 'var(--cream)', borderRadius: '12px', padding: '22px', maxWidth: '320px', width: '100%', border: '1.5px solid var(--line)' } });
+  box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', color: 'var(--signed)' } }, [ic('check', 18), h('span', { style: { fontWeight: '700', fontSize: '16px' } }, 'Faturayı kestin mi?')]));
+  const many = P.ids.length > 1;
+  box.appendChild(h('p', { style: { fontSize: '13.5px', lineHeight: '1.5', marginBottom: '14px' }, html: '<strong>' + P.label + '</strong> için fatura kesildi mi?' + (many ? ' Hepsi "fatura kesildi" olarak işaretlenecek' + (P.total ? ' (toplam ' + formatMoney(P.total) + ' KDV hariç).' : '.') : '') }));
+  const row = h('div', { style: { display: 'flex', gap: '10px' } });
+  row.appendChild(btn(['Hayır'], { onclick: () => { state.pendingInvoice = null; render(); }, style: { flex: '1', justifyContent: 'center', padding: '11px' } }, 'none', 'var(--inkSoft)'));
+  row.lastChild.style.border = '1.5px solid var(--line)';
+  row.appendChild(btn(['Evet, kesildi'], { onclick: confirmInvoiced, style: { flex: '1', justifyContent: 'center', padding: '11px' } }, 'var(--signed)', '#fff'));
+  box.appendChild(row); overlay.appendChild(box);
+  return overlay;
 }
 async function restoreFromTrash(s) {
   const rec = Object.assign({}, s, { updatedAt: Date.now() }); delete rec.deletedAt; delete rec._searchIdx;
@@ -3988,6 +4019,7 @@ function renderTasksView() {
   if (t.ready.length) {
     container.appendChild(h('h3', { style: { fontSize: '15px', margin: '0 0 4px', color: 'var(--signed)' } }, 'Fatura kesilebilir'));
     container.appendChild(h('div', { style: { fontSize: '12px', color: 'var(--inkSoft)', marginBottom: '10px' } }, 'Miktar ve birim fiyat girilmiş. Faturayı kestikten sonra "Fatura kesildi" ile işaretle.'));
+    if (t.ready.length > 1) container.appendChild(btn([ic('check', 14), ' Hepsini "Fatura kesildi" yap (' + t.ready.length + ')'], { onclick: markAllInvoiced, style: { width: '100%', justifyContent: 'center', padding: '10px', fontSize: '13px', marginBottom: '10px' } }, 'var(--signed)', '#fff'));
     const list = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '22px' } });
     t.ready.slice(0, state.tasksVisible).forEach((s) => {
       list.appendChild(taskCard(s, 'ready', btn([ic('check', 14), ' Fatura kesildi'], { onclick: () => markInvoiced(s), style: { width: '100%', justifyContent: 'center', padding: '9px', fontSize: '13px' } }, 'var(--signed)', '#fff')));
@@ -4618,6 +4650,7 @@ function render() {
   if (state.pendingPurge) app.appendChild(renderPurgeModal());
   if (state.pendingRestore) app.appendChild(renderRestoreModal());
   if (state.pendingDelete) app.appendChild(renderDeleteModal());
+  if (state.pendingInvoice) app.appendChild(renderInvoiceModal());
   if (state.pendingBackupPrompt) app.appendChild(renderBackupPromptModal());
   if (state.pendingExitConfirm) app.appendChild(renderExitConfirmModal());
   if (state.showPasteRestore) app.appendChild(renderPasteRestoreModal());
