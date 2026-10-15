@@ -1319,7 +1319,7 @@ function assistantData() {
   };
 }
 function assistantLog() { try { return JSON.parse(localStorage.getItem('sevkiyat_ai_son') || '[]').filter((x) => x && x.u && x.a).slice(-5); } catch (e) { return []; } }
-function assistantSave(u, a) { try { const L = assistantLog(); L.push({ u, a }); localStorage.setItem('sevkiyat_ai_son', JSON.stringify(L.slice(-5))); } catch (e) {} }
+function assistantSave(u, a) { u = String(u).split('\n[Sesle')[0]; try { const L = assistantLog(); L.push({ u, a }); localStorage.setItem('sevkiyat_ai_son', JSON.stringify(L.slice(-5))); } catch (e) {} }
 function openAssistant() {
   state.navMenuOpen = false; state.assistantOpen = true;
   if (!state.assistantMsgs.length) {
@@ -1435,23 +1435,49 @@ function assistantToggleSpeak() {
   if (!state.assistantSpeak) assistantStopSpeak();
   render();
 }
+
+function assistantFixSpeech(text, alts, companies) {
+  const N = (x) => trNormalize(String(x || '')).replace(/[^A-ZÇĞİÖŞÜ0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const words = (x) => N(x).split(' ').filter(Boolean);
+  // firma adının ilk kelimesi (ör. SAY MAKİNA -> SAY) konuşmada geçiyor mu?
+  const heads = Array.from(new Set(companies.map((c) => words(c)[0]).filter((w) => w && w.length >= 2)));
+  const hit = (x) => { const w = words(x); return heads.find((hd) => w.indexOf(hd) >= 0); };
+  let best = text;
+  if (!hit(text)) { const a = (alts || []).find((x) => hit(x)); if (a) best = a; }
+  // sık yanlış duyumlar: tek başına 'hayır/hay ır' firma adı olabilir
+  if (!hit(best) && heads.indexOf('SAY') >= 0) best = best.replace(/\b(hayır|hayir|sey|say ı|sayı)\b/gi, 'say');
+  const others = (alts || []).filter((x) => x && x !== best).slice(0, 4);
+  return best + (others.length ? '\n[Sesle söylendi, yanlış duyulmuş olabilir. Diğer olası duyumlar: ' + others.join(' | ') + '. Firma adı gibi duyulan kelimeyi Firmalar listesindeki en yakın firmayla eşleştir.]' : '\n[Sesle söylendi; firma adlarını Firmalar listesindeki en yakın yazımla eşleştir.]');
+}
 function assistantMicToggle() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return;
   assistantStopSpeak();
   if (state.assistantRec) { try { state.assistantRec.stop(); } catch (e) {} return; }
-  const r = new SR(); r.lang = 'tr-TR'; r.interimResults = true; r.continuous = false;
+  const r = new SR(); r.lang = 'tr-TR'; r.interimResults = true; r.continuous = false; r.maxAlternatives = 5;
+  const companies = Array.from(new Set(state.shipments.map((x) => x.company).filter(Boolean)));
+  try { if (window.SpeechRecognitionPhrase && 'phrases' in r) r.phrases = companies.slice(0, 200).map((c) => new window.SpeechRecognitionPhrase(c, 6)); } catch (e) {}
   state.assistantRec = r; state.assistantListening = true; state.assistantLive = ''; render();
-  let last = '';
-  r.onresult = (e) => { let t = ''; for (const x of e.results) t += x[0].transcript; last = t; state.assistantLive = t; const el = document.getElementById('ai-live'); if (el) el.textContent = t || 'Dinliyorum…'; };
+  let alts = [], last = '';
+  r.onresult = (e) => {
+    alts = []; let t = '';
+    for (let i = 0; i < e.results.length; i++) { t += e.results[i][0].transcript; }
+    const lastRes = e.results[e.results.length - 1];
+    for (let k = 0; k < lastRes.length; k++) alts.push(lastRes[k].transcript);
+    last = t; state.assistantLive = t; const el = document.getElementById('ai-live'); if (el) el.textContent = t || 'Dinliyorum…';
+  };
   r.onerror = () => { state.assistantRec = null; state.assistantListening = false; state.assistantLive = ''; render(); };
-  r.onend = () => { state.assistantRec = null; state.assistantListening = false; state.assistantLive = ''; if (last.trim()) askAssistant(last); else render(); };
+  r.onend = () => {
+    state.assistantRec = null; state.assistantListening = false; state.assistantLive = '';
+    if (!last.trim()) { render(); return; }
+    askAssistant(assistantFixSpeech(last, alts, companies), true);
+  };
   try { r.start(); } catch (e) { state.assistantRec = null; state.assistantListening = false; render(); }
 }
-async function askAssistant(text) {
+async function askAssistant(text, fromVoice) {
   text = String(text || '').trim();
   if (!text || state.assistantBusy) return;
-  state.assistantMsgs.push({ r: 'u', t: text });
+  state.assistantMsgs.push({ r: 'u', t: text.split('\n[Sesle')[0] });
   assistantStopSpeak(); try { if (window.speechSynthesis) window.speechSynthesis.getVoices(); } catch (e) {}
   state.assistantBusy = true; state.assistantInput = ''; render();
   let reply = '', opened = false;
