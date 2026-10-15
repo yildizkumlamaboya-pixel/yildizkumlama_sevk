@@ -1469,6 +1469,7 @@ function assistantSpeakText(t) {
   assistantTtsStream(clean, my).then(() => { AIFAIL = 0; }).catch((e) => {
     if (my !== AICUR) return;
     AIFAIL++; assistantBrowserVoice(clean);
+    try { state.assistantMsgs.push({ r: 'a', t: '(Gemini sesi açılamadı: ' + String(e && e.message || e).slice(0, 60) + ' — yedek ses kullanıldı)' }); render(); } catch (x) {}
   });
 }
 function assistantToggleSpeak() {
@@ -1543,17 +1544,21 @@ function assistantMicToggle() {
       ctx2 = new (window.AudioContext || window.webkitAudioContext)(); src = ctx2.createMediaStreamSource(stream); an = ctx2.createAnalyser(); an.fftSize = 1024; src.connect(an);
     } catch (e) { an = null; }
     const data = an ? new Uint8Array(an.fftSize) : null;
+    let noise = 0, nN = 0, quietSince = 0;
     timer = setInterval(() => {
       const now = Date.now();
       if (an) {
         an.getByteTimeDomainData(data); let sum = 0; for (let k = 0; k < data.length; k++) { const v = (data[k] - 128) / 128; sum += v * v; }
         const rms = Math.sqrt(sum / data.length);
-        if (rms > 0.03) { spoke = true; lastVoice = now; }
-        const el = document.getElementById('ai-live'); if (el && !spoke) el.textContent = 'Dinliyorum… konuş'; else if (el) el.textContent = rms > 0.03 ? 'Dinliyorum…' : 'Dinliyorum… (bitirince dur)';
-        if (spoke && now - lastVoice > 1400) { try { rec.stop(); } catch (e) {} }
-        else if (!spoke && now - t0 > 7000) { cancelled = true; try { rec.stop(); } catch (e) {} }
+        if (now - t0 < 600) { noise = (noise * nN + rms) / (nN + 1); nN++; return; }
+        const hi = Math.max(0.025, noise * 3 + 0.01), lo = Math.max(0.012, noise * 1.8 + 0.006);
+        if (rms > hi) { spoke = true; lastVoice = now; }
+        else if (rms > lo && spoke) { lastVoice = now; }
+        const el = document.getElementById('ai-live'); if (el) el.textContent = !spoke ? 'Dinliyorum… konuş' : (now - lastVoice > 900 ? 'Bitirdiysen mikrofona dokun…' : 'Dinliyorum…');
+        if (spoke && now - lastVoice > 2600) { try { rec.stop(); } catch (e) {} }
+        else if (!spoke && now - t0 > 9000) { cancelled = true; try { rec.stop(); } catch (e) {} }
       } else if (now - t0 > 6000) { spoke = true; try { rec.stop(); } catch (e) {} }
-      if (now - t0 > 25000) { try { rec.stop(); } catch (e) {} }
+      if (now - t0 > 30000) { try { rec.stop(); } catch (e) {} }
     }, 100);
     state.assistantRecorder = rec; state.assistantListening = true; state.assistantLive = ''; render();
     rec.start(250);
@@ -1567,7 +1572,7 @@ async function askAssistant(text, fromVoice) {
   if ((!text && !audio) || state.assistantBusy) return;
   state.assistantMsgs.push({ r: 'u', t: audio ? '🎤 …' : text.split('\n[Sesle')[0] });
   const myMsg = state.assistantMsgs[state.assistantMsgs.length - 1];
-  assistantStopSpeak(); try { if (window.speechSynthesis) window.speechSynthesis.getVoices(); } catch (e) {}
+  assistantStopSpeak(); try { if (window.speechSynthesis) window.speechSynthesis.getVoices(); AIX = AIX || new (window.AudioContext || window.webkitAudioContext)(); if (AIX.state === 'suspended') AIX.resume(); } catch (e) {}
   state.assistantBusy = true; state.assistantInput = ''; render();
   let reply = '', opened = false;
   try {
