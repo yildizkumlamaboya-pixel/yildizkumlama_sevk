@@ -1003,7 +1003,7 @@ const state = {
     lossPct: '', tinerPct: '', astarPrice: '275', sonkatPrice: '290', tinerPrice: '145', profitPct: '15', laborDiscountPct: '0',
   },
   paintCalcPricesOpen: false, paintCalcPdfBusy: false,
-  assistantOpen: false, assistantMsgs: [], assistantBusy: false, assistantInput: '', assistantRec: null, assistantListening: false,
+  assistantOpen: false, assistantMsgs: [], assistantBusy: false, assistantPending: null, assistantInput: '', assistantRec: null, assistantListening: false,
   autoBackups: [], autoBackupBusy: false, autoBackupError: '', autoRestoreDay: '',
   cloudSyncing: false, lastSyncAt: null, cloudLastError: '',
   pendingDeletions: (() => { try { return JSON.parse(localStorage.getItem('sevkiyat_pending_deletions') || '[]'); } catch (e) { return []; } })(),
@@ -1306,12 +1306,13 @@ function assistantData() {
   const monthObj = {}; months.forEach((k) => { monthObj[k] = byMonth[k]; });
   const coTop = Object.keys(byCo).sort((x, y) => byCo[y].tutar - byCo[x].tutar).slice(0, 60);
   const coObj = {}; coTop.forEach((k) => { coObj[k] = byCo[k]; });
-  const recent = list.slice(0, 25).map((s) => ({ no: s.seq, tarih: s.date, firma: s.company, plaka: s.plate, sofor: s.driver, miktar: s.tonnage ? (s.tonnage + ' ' + unitName(s.tonnageUnit)) : '', detay: s.paintDetails || '', birimFiyat: hasUnitPrice(s) ? parseFloat(s.unitPrice) : null, tutarKdvHaric: costAmount(s) !== null ? R(costAmount(s)) : null, net: netAmount(s) !== null ? R(netAmount(s)) : null, imzali: !!s.signature, faturaKesildi: !!s.invoiced }));
+  const recent = list.map((s) => [s.seq, s.date, s.company, s.plate, s.driver, s.tonnage === '' || s.tonnage == null ? null : parseFloat(s.tonnage), unitName(s.tonnageUnit), s.paintDetails || '', hasUnitPrice(s) ? parseFloat(s.unitPrice) : null, isNaN(parseFloat(s.paintCost)) ? null : parseFloat(s.paintCost), costAmount(s) !== null ? R(costAmount(s)) : null, netAmount(s) !== null ? R(netAmount(s)) : null, s.signature ? 1 : 0, s.invoiced ? 1 : 0]);
+  const quotes = state.quotes.slice(0, 80).map((q) => ({ tarih: q.date, firma: q.company, is: q.work, miktar: q.tonnage, birim: q.tonnageUnit, fiyat: q.price, durum: q.status, not: q.notes }));
   let tutar = 0, net = 0, boya = 0;
   list.forEach((s) => { const a = costAmount(s); if (a !== null) { tutar += a; net += netAmount(s); } const p = parseFloat(s.paintCost); if (!isNaN(p)) boya += p; });
   return {
     genel: { toplamSevkiyat: list.length, toplamTutarKdvHaric: R(tutar), kdvDahilToplam: R(withVat(tutar)), toplamBoyaMaliyeti: R(boya), toplamNet: R(net), fiyatiGirilmemis: noPrice, miktarsiz: noQty, imzasiz: noSign, faturasiz: noInvoice, copKutusunda: state.trash.length, teklifSayisi: state.quotes.length },
-    firmalar: coObj, aylar: monthObj, sonSevkiyatlar: recent,
+    firmalar: coObj, aylar: monthObj, kayitSutunlari: ['no','tarih','firma','plaka','sofor','miktar','birim','detay','birimFiyat','boyaMaliyeti','tutarKdvHaric','net','imzali','faturaKesildi'], kayitlar: recent, teklifler: quotes,
   };
 }
 function assistantLog() { try { return JSON.parse(localStorage.getItem('sevkiyat_ai_son') || '[]').filter((x) => x && x.u && x.a).slice(-5); } catch (e) { return []; } }
@@ -1319,7 +1320,7 @@ function assistantSave(u, a) { try { const L = assistantLog(); L.push({ u, a });
 function openAssistant() {
   state.navMenuOpen = false; state.assistantOpen = true;
   if (!state.assistantMsgs.length) {
-    state.assistantMsgs = [{ r: 'a', t: 'Merhaba! Sevkiyatlar, tutarlar ve net hakkında soru sorabilir ya da "Say\'a 861 kg kumlama yeni sevkiyat aç" diyebilirsin.' }];
+    state.assistantMsgs = [{ r: 'a', t: 'Merhaba! Tüm verilerini görüyorum. Soru sorabilir, kayıt ekleyip düzenleyebilir, fiyat/fatura girebilir, silebilir ya da ekran açtırabilirsin.' }];
   }
   render();
 }
@@ -1349,6 +1350,68 @@ function assistantOpenTarget(o) {
   }
   return false;
 }
+
+function assistantOpLabel(o) {
+  const f = o.alanlar || {};
+  const parts = Object.keys(f).map((k) => k + ': ' + f[k]);
+  const nos = Array.isArray(o.no) ? o.no.map((n) => '#' + n).join(', ') : (o.no ? '#' + o.no : '');
+  if (o.tip === 'sil') return 'SİL (çöp kutusuna) → ' + nos;
+  if (o.tip === 'ekle') return 'EKLE → ' + parts.join(', ');
+  return 'GÜNCELLE ' + nos + ' → ' + parts.join(', ');
+}
+function assistantPatch(base, f) {
+  const r = Object.assign({}, base);
+  const up = (v) => String(v == null ? '' : v).trim().toLocaleUpperCase('tr-TR');
+  if (f.firma != null) r.company = up(f.firma);
+  if (f.plaka != null) r.plate = up(f.plaka);
+  if (f.sofor != null) r.driver = up(f.sofor);
+  if (f.aciklama != null) r.paintDetails = up(f.aciklama);
+  if (f.tarih != null && /^\d{4}-\d{2}-\d{2}$/.test(f.tarih)) r.date = f.tarih;
+  if (f.miktar != null && f.miktar !== '') r.tonnage = String(f.miktar);
+  if (f.birim != null && ['kg', 'ton', 'm2', 'adet'].indexOf(f.birim) >= 0) r.tonnageUnit = f.birim;
+  if (f.birimFiyat !== undefined) r.unitPrice = (f.birimFiyat === null || f.birimFiyat === '') ? '' : parseFloat(f.birimFiyat);
+  if (f.boyaMaliyeti !== undefined) r.paintCost = (f.boyaMaliyeti === null || f.boyaMaliyeti === '') ? '' : parseFloat(f.boyaMaliyeti);
+  if (f.fatura !== undefined) r.invoiced = f.fatura === true || f.fatura === 'true' || f.fatura === 1;
+  return r;
+}
+async function applyAssistantOps() {
+  const P = state.assistantPending; if (!P) return;
+  state.assistantPending = null; state.assistantBusy = true; render();
+  let ok = 0, fail = 0;
+  try { await createAutoBackup('asistan-oncesi', true); } catch (e) {}
+  for (const o of P.ops) {
+    try {
+      const nos = (Array.isArray(o.no) ? o.no : [o.no]).filter((n) => n != null).map(Number);
+      if (o.tip === 'ekle') {
+        const base = Object.assign(emptyForm(), { id: uid(), seq: nextSeq(), createdAt: Date.now(), tonnageUnit: 'kg' });
+        const rec = assistantPatch(base, o.alanlar || {});
+        rec.updatedAt = Date.now(); delete rec.photos; rec.photos = [];
+        await dbPut(rec); if (supabaseClient) cloudPushShipment(rec).catch(() => {});
+        rec._searchIdx = computeSearchIndex(rec); state.shipments.unshift(rec); ok++;
+      } else if (o.tip === 'guncelle' || o.tip === 'sil') {
+        for (const n of nos) {
+          const idx = state.shipments.findIndex((x) => Number(x.seq) === n);
+          if (idx === -1) { fail++; continue; }
+          const cur = state.shipments[idx];
+          if (o.tip === 'sil') {
+            const rec = Object.assign({}, cur, { deletedAt: Date.now(), updatedAt: Date.now() }); delete rec._searchIdx;
+            await dbPut(rec); markDeleted(cur.id);
+            if (supabaseClient) { const k = await cloudDeleteShipment(cur.id); if (k) unmarkDeleted(cur.id); }
+            state.shipments.splice(idx, 1); state.trash.unshift(rec); ok++;
+          } else {
+            const rec = assistantPatch(cur, o.alanlar || {}); rec.updatedAt = Date.now(); delete rec._searchIdx;
+            await dbPut(rec); if (supabaseClient) cloudPushShipment(rec).catch(() => {});
+            rec._searchIdx = computeSearchIndex(rec); state.shipments[idx] = rec; ok++;
+          }
+        }
+      } else fail++;
+    } catch (e) { fail++; }
+  }
+  state.shipments.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0));
+  try { await refreshStorageInfo(); } catch (e) {}
+  state.assistantMsgs.push({ r: 'a', t: '✓ ' + ok + ' işlem uygulandı' + (fail ? ', ' + fail + ' işlem yapılamadı.' : '.') + ' (Öncesinde otomatik yedek alındı; silinenler Çöp Kutusu\'nda.)' });
+  state.assistantBusy = false; render();
+}
 async function askAssistant(text) {
   text = String(text || '').trim();
   if (!text || state.assistantBusy) return;
@@ -1364,6 +1427,13 @@ async function askAssistant(text) {
     if (res.error || !d) throw new Error('Asistan şu an cevap veremedi.');
     if (d.err) throw new Error(d.err + (d.detay ? ' · ' + (typeof d.detay === 'string' ? d.detay : JSON.stringify(d.detay).slice(0, 120)) : ''));
     reply = d.cevap || d.mesaj || 'Anlayamadım, biraz daha açık yazar mısın?';
+    if (d.islem === 'uygula' && Array.isArray(d.islemler) && d.islemler.length) {
+      state.assistantPending = { ops: d.islemler.slice(0, 200), text };
+      state.assistantMsgs.push({ r: 'a', t: reply });
+      assistantSave(text, reply);
+      state.assistantBusy = false; render();
+      return;
+    }
     if (d.islem === 'ac') {
       if (state.pinEnabled === false || true) { /* yetki: sadece form açılır, kayıt kullanıcıdadır */ }
       state.assistantMsgs.push({ r: 'a', t: reply });
@@ -1393,6 +1463,17 @@ function renderAssistantModal() {
   });
   if (state.assistantBusy) log.appendChild(h('div', { style: { alignSelf: 'flex-start', padding: '9px 12px', borderRadius: '14px', background: 'var(--cream)', border: '1.5px solid var(--line)', color: 'var(--inkSoft)', fontSize: '13px' } }, 'Düşünüyor…'));
   box.appendChild(log);
+  if (state.assistantPending) {
+    const card = h('div', { style: { border: '1.5px solid var(--accent)', borderRadius: '12px', padding: '10px', margin: '8px 0 2px', background: 'var(--cream)', maxHeight: '26vh', overflowY: 'auto' } });
+    card.appendChild(h('div', { style: { fontWeight: '800', fontSize: '12.5px', marginBottom: '5px' } }, state.assistantPending.ops.length + ' işlem uygulanacak:'));
+    state.assistantPending.ops.slice(0, 40).forEach((o) => card.appendChild(h('div', { style: { fontSize: '12px', padding: '2px 0', color: o.tip === 'sil' ? 'var(--stamp)' : 'var(--ink)' } }, '• ' + assistantOpLabel(o))));
+    if (state.assistantPending.ops.length > 40) card.appendChild(h('div', { style: { fontSize: '12px', color: 'var(--inkSoft)' } }, '… ve ' + (state.assistantPending.ops.length - 40) + ' işlem daha'));
+    box.appendChild(card);
+    box.appendChild(h('div', { style: { display: 'flex', gap: '8px', marginTop: '8px' } }, [
+      btn(['Uygula'], { type: 'button', onclick: () => applyAssistantOps(), style: { flex: '1', justifyContent: 'center', padding: '11px' } }, 'var(--accent)', 'var(--on-accent)'),
+      btn(['Vazgeç'], { type: 'button', onclick: () => { state.assistantPending = null; state.assistantMsgs.push({ r: 'a', t: 'Vazgeçildi, hiçbir şey değişmedi.' }); render(); }, style: { flex: '1', justifyContent: 'center', padding: '11px' } }, 'var(--paper2)', 'var(--ink)'),
+    ]));
+  }
   if (state.assistantMsgs.length <= 1) {
     const sug = h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', margin: '8px 0 2px' } });
     ['Bu ay toplam tutar ne kadar?', 'En çok iş yaptığımız firma hangisi?', 'Faturası kesilmemiş kaç sevkiyat var?'].forEach((q) => sug.appendChild(h('button', { type: 'button', onclick: () => askAssistant(q), style: { border: '1.5px solid var(--line)', background: 'var(--cream)', color: 'var(--ink)', borderRadius: '999px', padding: '6px 11px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' } }, q)));
@@ -1414,7 +1495,7 @@ function renderAssistantModal() {
   }, style: { padding: '0', width: '44px', height: '44px', justifyContent: 'center', fontSize: '17px', flex: '0 0 auto' } }, state.assistantListening ? 'var(--stamp)' : 'var(--paper2)', state.assistantListening ? '#fff' : 'var(--ink)'));
   row.appendChild(btn(['Gönder'], { type: 'button', disabled: state.assistantBusy, onclick: () => { const el = document.getElementById('ai-input'); askAssistant(el ? el.value : state.assistantInput); }, style: { height: '44px', padding: '0 16px', justifyContent: 'center', flex: '0 0 auto' } }, 'var(--accent)', 'var(--on-accent)'));
   box.appendChild(row);
-  box.appendChild(h('div', { style: { fontSize: '10.5px', color: 'var(--inkSoft)', marginTop: '6px', textAlign: 'center' } }, 'Asistan kayıt yapmaz; form açar, kaydı sen onaylarsın. Cevapları önemli işlerde kontrol et.'));
+  box.appendChild(h('div', { style: { fontSize: '10.5px', color: 'var(--inkSoft)', marginTop: '6px', textAlign: 'center' } }, 'Değişiklikler sen Uygula\'ya basınca yapılır; öncesinde otomatik yedek alınır.'));
   overlay.appendChild(box);
   setTimeout(() => { const L = document.getElementById('ai-log'); if (L) L.scrollTop = L.scrollHeight; }, 20);
   return overlay;
