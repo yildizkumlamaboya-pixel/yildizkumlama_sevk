@@ -1309,7 +1309,7 @@ function assistantData() {
   const monthObj = {}; months.forEach((k) => { monthObj[k] = byMonth[k]; });
   const coTop = Object.keys(byCo).sort((x, y) => byCo[y].tutar - byCo[x].tutar).slice(0, 60);
   const coObj = {}; coTop.forEach((k) => { coObj[k] = byCo[k]; });
-  const recent = list.map((s) => [s.seq, s.date, s.company, s.plate, s.driver, s.tonnage === '' || s.tonnage == null ? null : parseFloat(s.tonnage), unitName(s.tonnageUnit), s.paintDetails || '', hasUnitPrice(s) ? parseFloat(s.unitPrice) : null, isNaN(parseFloat(s.paintCost)) ? null : parseFloat(s.paintCost), costAmount(s) !== null ? R(costAmount(s)) : null, netAmount(s) !== null ? R(netAmount(s)) : null, s.signature ? 1 : 0, s.invoiced ? 1 : 0]);
+  const recent = list.slice(0, 600).map((s) => [s.seq, s.date, s.company, s.plate, s.driver, s.tonnage === '' || s.tonnage == null ? null : parseFloat(s.tonnage), unitName(s.tonnageUnit), String(s.paintDetails || '').slice(0, 28), hasUnitPrice(s) ? parseFloat(s.unitPrice) : null, isNaN(parseFloat(s.paintCost)) ? null : parseFloat(s.paintCost), costAmount(s) !== null ? R(costAmount(s)) : null, netAmount(s) !== null ? R(netAmount(s)) : null, s.signature ? 1 : 0, s.invoiced ? 1 : 0]);
   const quotes = state.quotes.slice(0, 80).map((q) => ({ tarih: q.date, firma: q.company, is: q.work, miktar: q.tonnage, birim: q.tonnageUnit, fiyat: q.price, durum: q.status, not: q.notes }));
   let tutar = 0, net = 0, boya = 0;
   list.forEach((s) => { const a = costAmount(s); if (a !== null) { tutar += a; net += netAmount(s); } const p = parseFloat(s.paintCost); if (!isNaN(p)) boya += p; });
@@ -3807,16 +3807,18 @@ async function purgeFromTrash(ids) {
 
 /* ---- tab bar badge + task banner ---- */
 function buildTaskBanner() {
-  const t = computeTasks();
-  if (!t.ready.length && !t.missing.length) return null;
-  const overdue = t.missing.filter((m) => ageDays(m.s) >= 7).length;
-  const parts = [];
-  if (t.ready.length) parts.push(h('div', { style: { color: 'var(--signed)', fontWeight: '600' } }, '✓ ' + t.ready.length + ' kayıt fatura kesilmeye hazır'));
-  if (t.missing.length) parts.push(h('div', { style: { color: 'var(--warn)', fontWeight: '600' } }, '⚠ ' + t.missing.length + ' kayıtta miktar/fiyat eksik' + (overdue ? ' (' + overdue + ' tanesi 7+ gündür bekliyor)' : '')));
-  return h('div', {
-    onclick: () => { state.navStack = ['list']; state.view = 'tasks'; render(); },
-    style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', background: t.ready.length ? 'var(--signed-bg)' : 'var(--warn-bg)', border: '1px solid ' + (t.ready.length ? 'var(--signed-border)' : 'var(--warn-border)'), borderRadius: '12px', padding: '10px 14px', fontSize: '13px', marginBottom: '12px', cursor: 'pointer' },
-  }, [h('div', { style: { display: 'flex', flexDirection: 'column', gap: '3px' } }, parts), h('span', { style: { fontWeight: '700', color: 'var(--primary-dark)', whiteSpace: 'nowrap' } }, 'Görevler ›')]);
+  const bar = h('div', {
+    onclick: () => openAssistant(),
+    style: { display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--accent-soft-bg)', border: '1.5px solid var(--accent)', borderRadius: '14px', padding: '11px 14px', marginBottom: '12px', cursor: 'pointer' },
+  }, [
+    h('span', { style: { color: 'var(--accent)', display: 'inline-flex' } }, [ic('sparkle', 22)]),
+    h('div', { style: { flex: '1', minWidth: '0' } }, [
+      h('div', { style: { fontWeight: '800', fontSize: '14px', color: 'var(--ink)' } }, 'Asistan'),
+      h('div', { style: { fontSize: '12px', color: 'var(--inkSoft)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, 'Sor, konuş, kayıt ekle veya düzenlet…'),
+    ]),
+    h('span', { onclick: (e) => { e.stopPropagation(); openAssistant(); setTimeout(assistantMicToggle, 60); }, style: { width: '38px', height: '38px', borderRadius: '50%', background: 'var(--accent)', color: 'var(--on-accent)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' } }, [ic('mic', 20)]),
+  ]);
+  return bar;
 }
 
 /* ---- Görevler view ---- */
