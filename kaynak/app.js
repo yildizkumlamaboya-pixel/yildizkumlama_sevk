@@ -28,6 +28,8 @@ function icon(svgInner, size) {
   return span;
 }
 const ICONS = {
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 9"/>',
+  whatsapp: '<path d="M3 21l1.6-4.8A8.5 8.5 0 1 1 8 19.4L3 21z"/><path d="M9 9.5c.3 2.4 2.6 4.6 5.5 5.5l1.2-1.3-2-1-1 .7c-.8-.4-1.7-1.3-2.1-2.1l.7-1-1-2L9 9.5z"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/>',
   speaker: '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>',
   speakeroff: '<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 9l5 6M22 9l-5 6"/>',
@@ -1006,7 +1008,7 @@ const state = {
     lossPct: '', tinerPct: '', astarPrice: '275', sonkatPrice: '290', tinerPrice: '145', profitPct: '15', laborDiscountPct: '0',
   },
   paintCalcPricesOpen: false, paintCalcPdfBusy: false,
-  assistantOpen: false, assistantMsgs: [], assistantSpeak: (() => { try { return localStorage.getItem('sevkiyat_ai_ses') !== '0'; } catch (e) { return true; } })(), assistantLive: '', assistantRecorder: null, assistantBusy: false, assistantPending: null, assistantInput: '', assistantRec: null, assistantListening: false,
+  assistantOpen: false, assistantMsgs: [], assistantSpeak: (() => { try { return localStorage.getItem('sevkiyat_ai_ses') !== '0'; } catch (e) { return true; } })(), assistantLive: '', assistantRecorder: null, wa: null, assistantBusy: false, assistantPending: null, assistantInput: '', assistantRec: null, assistantListening: false,
   autoBackups: [], autoBackupBusy: false, autoBackupError: '', autoRestoreDay: '',
   cloudSyncing: false, lastSyncAt: null, cloudLastError: '',
   pendingDeletions: (() => { try { return JSON.parse(localStorage.getItem('sevkiyat_pending_deletions') || '[]'); } catch (e) { return []; } })(),
@@ -1458,6 +1460,132 @@ async function assistantTtsStream(t, my) {
   }
   if (buf.trim()) play(buf.trim());
   if (!got) throw new Error('tts-bos');
+}
+
+/* ============================== WhatsApp'tan sevkiyat ekle ============================== */
+function waNormCo(x) { return trNormalize(String(x || '')).replace(/[^A-ZÇĞİÖŞÜ0-9]/g, ''); }
+function waDayDiff(a, b) { if (!a || !b) return 999; return Math.abs((new Date(a) - new Date(b)) / 86400000); }
+function waIsDup(it, others) {
+  const co = waNormCo(it.firma), q = parseFloat(it.miktar), pl = waNormCo(it.plaka);
+  const same = (s) => {
+    const sc = waNormCo(s.company);
+    const coOk = co && sc && (sc === co || sc.indexOf(co) >= 0 || co.indexOf(sc) >= 0);
+    if (!coOk) return false;
+    const dd = waDayDiff(it.tarih, s.date);
+    const sq = parseFloat(s.tonnage);
+    if (!isNaN(q) && !isNaN(sq) && Math.abs(q - sq) <= Math.max(1, q * 0.005) && dd <= 1) return true;
+    if (pl && waNormCo(s.plate) === pl && dd <= 1) return true;
+    return false;
+  };
+  return state.shipments.some(same) || (others || []).some((o) => o !== it && waIsSameItem(it, o));
+}
+function waIsSameItem(a, b) {
+  return waNormCo(a.firma) === waNormCo(b.firma) && (a.tarih || '') === (b.tarih || '') && parseFloat(a.miktar) === parseFloat(b.miktar) && waNormCo(a.plaka) === waNormCo(b.plaka);
+}
+function openWhatsApp() {
+  state.navMenuOpen = false;
+  state.wa = { step: 'pick', files: [], text: '', busy: false, err: '', items: [], msg: '' };
+  render();
+}
+function waCompress(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file); const img = new Image();
+    img.onload = () => {
+      const max = 1500; let w = img.width, h2 = img.height; const k = Math.min(1, max / Math.max(w, h2));
+      w = Math.round(w * k); h2 = Math.round(h2 * k);
+      const c = document.createElement('canvas'); c.width = w; c.height = h2; c.getContext('2d').drawImage(img, 0, 0, w, h2);
+      URL.revokeObjectURL(url); resolve(c.toDataURL('image/jpeg', 0.72).split(',')[1]);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Görsel açılamadı')); };
+    img.src = url;
+  });
+}
+async function waAnalyze() {
+  const W = state.wa; if (!W || W.busy) return;
+  const ta = document.getElementById('wa-text'); if (ta) W.text = ta.value;
+  if (!W.files.length && !W.text.trim()) { W.err = 'Ekran görüntüsü seç veya mesajları yapıştır.'; render(); return; }
+  W.busy = true; W.err = ''; render();
+  try {
+    if (!supabaseClient) throw new Error('İnternet ve bulut bağlantısı gerekir.');
+    const imgs = []; for (const f of W.files.slice(0, 8)) imgs.push(await waCompress(f));
+    const companies = Array.from(new Set(state.shipments.map((x) => x.company).filter(Boolean))).slice(0, 200);
+    const res = await supabaseClient.functions.invoke('ai-whatsapp', { body: { gorseller: imgs, metin: W.text, bugun: todayISO(), firmalar: companies } });
+    const d = res && res.data;
+    if (res.error || !d) throw new Error('Okunamadı, tekrar dene.');
+    if (d.err) throw new Error(d.err + (d.detay ? ' · ' + JSON.stringify(d.detay).slice(0, 100) : ''));
+    const items = (d.kayitlar || []).map((x) => ({ tarih: /^\d{4}-\d{2}-\d{2}$/.test(x.tarih || '') ? x.tarih : todayISO(), saat: x.saat || '', firma: String(x.firma || '').trim().toLocaleUpperCase('tr-TR'), plaka: String(x.plaka || '').trim().toLocaleUpperCase('tr-TR'), miktar: x.miktar == null || x.miktar === '' ? '' : x.miktar, birim: ['kg', 'ton', 'm2', 'adet'].indexOf(x.birim) >= 0 ? x.birim : 'kg', aciklama: String(x.aciklama || '').trim().toLocaleUpperCase('tr-TR'), not: x.not || '' })).filter((x) => x.firma);
+    items.forEach((it) => { it.dup = waIsDup(it, items.filter((o) => o !== it && items.indexOf(o) < items.indexOf(it))); it.sel = !it.dup; });
+    W.items = items; W.msg = d.mesaj || ''; W.step = 'review';
+  } catch (e) { W.err = (e && e.message) || 'Okunamadı.'; }
+  W.busy = false; render();
+}
+async function waSave() {
+  const W = state.wa; if (!W) return;
+  const chosen = W.items.filter((x) => x.sel);
+  if (!chosen.length) return;
+  W.busy = true; render();
+  try { await createAutoBackup('whatsapp-oncesi', true); } catch (e) {}
+  let ok = 0;
+  for (const it of chosen) {
+    try {
+      const rec = Object.assign(emptyForm(), { id: uid(), seq: nextSeq(), createdAt: Date.now(), updatedAt: Date.now(), photos: [] });
+      rec.date = it.tarih; rec.company = it.firma; rec.plate = it.plaka; rec.paintDetails = it.aciklama;
+      if (it.miktar !== '') { rec.tonnage = String(it.miktar); rec.tonnageUnit = it.birim || 'kg'; }
+      await dbPut(rec); if (supabaseClient) cloudPushShipment(rec).catch(() => {});
+      rec._searchIdx = computeSearchIndex(rec); state.shipments.unshift(rec); ok++;
+    } catch (e) {}
+  }
+  state.shipments.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0));
+  try { await refreshStorageInfo(); } catch (e) {}
+  state.wa = null; state.successMsg = ok + ' sevkiyat kaydedildi (WhatsApp).'; setTimeout(() => { state.successMsg = ''; render(); }, 6000);
+  render();
+}
+function renderWhatsAppModal() {
+  const W = state.wa;
+  const overlay = h('div', { style: { position: 'fixed', inset: '0', background: 'rgba(17,24,39,.55)', zIndex: '70', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }, onclick: () => { if (!W.busy) { state.wa = null; render(); } } });
+  const box = h('div', { onclick: (e) => e.stopPropagation(), style: { background: 'var(--paper)', width: '100%', maxWidth: '560px', borderRadius: '22px 22px 0 0', padding: '14px 14px calc(14px + env(safe-area-inset-bottom))', boxShadow: '0 -12px 40px rgba(0,0,0,.3)', display: 'flex', flexDirection: 'column', maxHeight: '90vh' } });
+  box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' } }, [
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '800', fontSize: '15px' } }, [ic('whatsapp', 19, '#16A34A'), ' WhatsApp\'tan sevkiyat ekle']),
+    h('span', { onclick: () => { if (!W.busy) { state.wa = null; render(); } }, style: { cursor: 'pointer', color: 'var(--inkSoft)', fontWeight: '700', padding: '4px 6px', fontSize: '16px' } }, '✕'),
+  ]));
+  const body = h('div', { style: { overflowY: 'auto', flex: '1' } });
+  if (W.step === 'pick') {
+    body.appendChild(h('div', { style: { fontSize: '12.5px', color: 'var(--inkSoft)', lineHeight: '1.5', marginBottom: '10px' } }, 'WhatsApp\'ta "Fabrika giden malzeme" grubunu aç, sevkiyat mesajlarının ekran görüntülerini al, buradan seç (en fazla 8). İstersen mesajları kopyalayıp aşağıya da yapıştırabilirsin.'));
+    const fi = h('input', { type: 'file', accept: 'image/*', multiple: true, style: { display: 'none' }, onchange: (e) => { W.files = Array.from(e.target.files || []).slice(0, 8); render(); } });
+    body.appendChild(fi);
+    body.appendChild(btn([ic('image', 16), W.files.length ? ' ' + W.files.length + ' ekran görüntüsü seçildi (değiştir)' : ' Ekran görüntüsü seç'], { type: 'button', onclick: () => fi.click(), style: { width: '100%', justifyContent: 'center', padding: '13px', marginBottom: '10px' } }, 'var(--accent)', 'var(--on-accent)'));
+    const ta = h('textarea', { id: 'wa-text', rows: 4, className: 'input', placeholder: 'veya kopyalanan WhatsApp mesajları…', style: { width: '100%', resize: 'vertical', fontSize: '13.5px', fontFamily: "'Inter',sans-serif" } });
+    ta.value = W.text || ''; body.appendChild(ta);
+    if (W.err) body.appendChild(h('div', { style: { color: 'var(--stamp)', fontSize: '12.5px', margin: '8px 0 0', fontWeight: '600' } }, W.err));
+    if (W.busy) body.appendChild(h('div', { style: { textAlign: 'center', padding: '14px', color: 'var(--inkSoft)', fontSize: '13px' } }, 'Mesajlar okunuyor… (yaklaşık 10-20 saniye)'));
+    else body.appendChild(btn(['Mesajları oku'], { type: 'button', onclick: waAnalyze, style: { width: '100%', justifyContent: 'center', padding: '12px', marginTop: '10px' } }, 'var(--ink)', 'var(--cream)'));
+  } else {
+    const n = W.items.filter((x) => x.sel).length;
+    body.appendChild(h('div', { style: { fontSize: '12.5px', color: 'var(--inkSoft)', marginBottom: '8px', lineHeight: '1.5' } }, W.items.length ? (W.items.length + ' sevkiyat bulundu. Daha önce kayıtlı olanlar işaretsiz geldi. Kontrol edip kaydet.') : (W.msg || 'Sevkiyat bulunamadı.')));
+    W.items.forEach((it) => {
+      const row = h('label', { style: { display: 'flex', gap: '10px', alignItems: 'flex-start', border: '1.5px solid ' + (it.sel ? 'var(--accent)' : 'var(--line)'), borderRadius: '12px', padding: '10px 12px', marginBottom: '8px', background: it.dup ? 'var(--warn-bg)' : 'var(--cream)', cursor: 'pointer' } });
+      const cb = h('input', { type: 'checkbox', style: { width: '20px', height: '20px', marginTop: '2px', flex: '0 0 auto' }, onchange: (e) => { it.sel = e.target.checked; render(); } }); cb.checked = !!it.sel;
+      row.appendChild(cb);
+      row.appendChild(h('div', { style: { flex: '1', minWidth: '0', fontSize: '13px', lineHeight: '1.45' } }, [
+        h('div', { style: { fontWeight: '800', fontSize: '14px' } }, it.firma + (it.miktar !== '' ? ' · ' + fmtNum(parseFloat(it.miktar)) + ' ' + (it.birim === 'm2' ? 'm²' : it.birim) : ' · miktar yok')),
+        h('div', { style: { color: 'var(--inkSoft)' } }, formatDateTR(it.tarih) + (it.saat ? ' ' + it.saat : '') + (it.plaka ? ' · ' + it.plaka : '')),
+        it.aciklama ? h('div', { style: { color: 'var(--inkSoft)' } }, it.aciklama) : null,
+        it.dup ? h('div', { style: { color: 'var(--warn)', fontWeight: '700', fontSize: '12px' } }, 'Zaten kayıtlı görünüyor') : null,
+        it.not ? h('div', { style: { color: 'var(--inkSoft)', fontSize: '11.5px' } }, '⚠ ' + it.not) : null,
+      ].filter(Boolean)));
+      body.appendChild(row);
+    });
+  }
+  box.appendChild(body);
+  if (W.step === 'review') {
+    const n = W.items.filter((x) => x.sel).length;
+    box.appendChild(h('div', { style: { display: 'flex', gap: '8px', marginTop: '10px' } }, [
+      btn(['Geri'], { type: 'button', onclick: () => { W.step = 'pick'; render(); }, style: { flex: '1', justifyContent: 'center', padding: '12px' } }, 'var(--paper2)', 'var(--ink)'),
+      btn([W.busy ? 'Kaydediliyor…' : 'Seçilenleri kaydet (' + n + ')'], { type: 'button', disabled: !n || W.busy, onclick: waSave, style: { flex: '2', justifyContent: 'center', padding: '12px' } }, 'var(--accent)', 'var(--on-accent)'),
+    ]));
+  }
+  overlay.appendChild(box);
+  return overlay;
 }
 function assistantSpeechText(t) {
   let x = String(t);
@@ -3132,6 +3260,7 @@ function handleBackIntent() {
   if (state.uiExpanded.backup) { state.uiExpanded.backup = false; render(); return true; }
   if (state.navMenuOpen) { state.navMenuOpen = false; render(); return true; }
   if (state.pendingCostEdit) { state.pendingCostEdit = null; render(); return true; }
+  if (state.wa && !state.wa.busy) { state.wa = null; render(); return true; }
   if (state.pendingInvoice) { state.pendingInvoice = null; render(); return true; }
   if (state.pendingDelete) { state.pendingDelete = null; render(); return true; }
   if (state.pendingRestore) { state.pendingRestore = null; render(); return true; }
@@ -3986,7 +4115,16 @@ function buildTaskBanner() {
     ]),
     h('span', { onclick: (e) => { e.stopPropagation(); openAssistant(); setTimeout(assistantMicToggle, 60); }, style: { width: '38px', height: '38px', borderRadius: '50%', background: 'var(--accent)', color: 'var(--on-accent)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' } }, [ic('mic', 20)]),
   ]);
-  return bar;
+  const wa = h('div', {
+    onclick: () => openWhatsApp(),
+    style: { display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--cream)', border: '1.5px solid #16A34A', borderRadius: '14px', padding: '10px 14px', marginBottom: '12px', cursor: 'pointer' },
+  }, [
+    h('span', { style: { color: '#16A34A', display: 'inline-flex' } }, [ic('whatsapp', 22)]),
+    h('div', { style: { flex: '1', fontWeight: '800', fontSize: '14px' } }, 'WhatsApp\'tan sevkiyat ekle'),
+    h('span', { style: { color: 'var(--inkSoft)', fontSize: '18px' } }, '›'),
+  ]);
+  const wrap = h('div', {}); wrap.appendChild(bar); wrap.appendChild(wa);
+  return wrap;
 }
 
 /* ---- Görevler view ---- */
@@ -4659,6 +4797,7 @@ function render() {
   if (state.pendingCostEdit) app.appendChild(renderCostEditModal());
   if (state.uiExpanded.backup) app.appendChild(renderBackupMenu());
   if (state.assistantOpen) app.appendChild(renderAssistantModal());
+  if (state.wa) app.appendChild(renderWhatsAppModal());
   if (showNav) app.appendChild(renderBottomNav());
   if (state.navMenuOpen) app.appendChild(renderNavMenu());
 }
@@ -4713,6 +4852,7 @@ function renderNavMenu() {
   const grid = h('div', { className: 'sheetgrid' });
   const tile = (label, iconName, onclick, on, badge) => h('div', { className: 'tile' + (on ? ' on' : ''), onclick }, [ic(iconName, 24), label, badge ? h('span', { className: 'bdg' }, String(badge)) : null]);
   grid.appendChild(tile('Asistan', 'sparkle', () => openAssistant(), false));
+  grid.appendChild(tile('WhatsApp', 'whatsapp', () => openWhatsApp(), false));
   NAV_ITEMS.filter((it) => ['prices', 'quotes', 'summary', 'paintcalc', 'trash'].indexOf(it.view) >= 0).forEach((it) => {
     grid.appendChild(tile(it.label, it.icon, () => gotoTab(it.view), state.view === it.view, it.badge ? it.badge() : 0));
   });
