@@ -3671,6 +3671,16 @@ function handleBackIntent() {
   render();
   return true;
 }
+/* Öneri listeleri (firma, plaka…) boş alana dokununca açılmasın; yazmaya başlayınca önersin. */
+function dlSync(el) {
+  if (!el || el.tagName !== 'INPUT') return;
+  const id = el.getAttribute('list') || (el.dataset && el.dataset.dl);
+  if (!id) return;
+  el.dataset.dl = id;
+  if (String(el.value || '').trim()) { if (el.getAttribute('list') !== id) el.setAttribute('list', id); }
+  else if (el.hasAttribute('list')) el.removeAttribute('list');
+}
+['pointerdown', 'touchstart', 'focusin', 'input'].forEach((ev) => document.addEventListener(ev, (e) => dlSync(e.target), { capture: true, passive: true }));
 window.addEventListener('popstate', () => {
   const stay = handleBackIntent();
   if (stay) { try { history.pushState(null, '', ''); } catch (e) {} }
