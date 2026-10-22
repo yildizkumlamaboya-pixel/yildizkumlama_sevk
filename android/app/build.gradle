@@ -1,0 +1,42 @@
+plugins { id 'com.android.application' }
+
+def buildNo = (System.getenv('BUILD_NUMBER') ?: '1').toInteger()
+def ciKs = file('../ci.keystore')
+
+android {
+    namespace 'com.yildiz.sevkiyat'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'com.yildiz.sevkiyat'
+        minSdk 24
+        targetSdk 34
+        versionCode buildNo
+        versionName "1.0.${buildNo}"
+    }
+    signingConfigs {
+        ci {
+            storeFile ciKs
+            storePassword 'android'
+            keyAlias 'ci'
+            keyPassword 'android'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig ciKs.exists() ? signingConfigs.ci : signingConfigs.debug
+        }
+    }
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core:1.13.1'
+}

@@ -167,10 +167,17 @@ async function dbGetAll() {
   });
 }
 let _abTimer = null;
-function scheduleAutoBackup() { // değişiklikten 1 dk sonra (art arda değişikliklerde tek yedek) bugünkü yedeği güncelle
-  clearTimeout(_abTimer);
-  _abTimer = setTimeout(() => { createAutoBackup(todayISO(), true).then((ok) => { if (ok) render(); }).catch(() => {}); }, 60000);
+function runScheduledBackup() {
+  _abTimer = null;
+  if (state.autoBackupBusy) { scheduleAutoBackup(); return; }
+  createAutoBackup(todayISO(), true).then((ok) => { if (ok) render(); }).catch(() => {});
 }
+function scheduleAutoBackup() { // her işlemden birkaç sn sonra (art arda işlemlerde tek yedek) bugünkü yedeği güncelle
+  clearTimeout(_abTimer);
+  _abTimer = setTimeout(runScheduledBackup, 4000);
+}
+window.sevkFlushBackup = function () { if (_abTimer) { clearTimeout(_abTimer); runScheduledBackup(); } };
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') window.sevkFlushBackup(); });
 async function dbPut(record) {
   setTimeout(scheduleAutoBackup, 0);
   const db = await openDB();
@@ -931,6 +938,7 @@ async function saveOrShareFile(data, filename, mimeType, pickerAccept) {
     blob = new Blob([bytes], { type: mimeType || 'application/octet-stream' });
   }
   if (!blob.size) throw new Error('Kaydedilecek veri boş.');
+  if (NATIVE) { await nativePut('file', blob); NATIVE.saveAs(filename, mimeType || 'application/octet-stream'); return 'native'; }
   if (window.showSaveFilePicker) {
     try {
       const handle = await window.showSaveFilePicker({
@@ -975,7 +983,7 @@ async function saveOrShareFile(data, filename, mimeType, pickerAccept) {
 function backupStatusMessage(mode) {
   if (mode === 'picker') return '✓ Yedek, seçtiğin konuma kaydedildi.';
   if (mode === 'shared') return '✓ Yedek paylaşıldı.';
-  if (mode === 'cancelled') return null;
+  if (mode === 'cancelled' || mode === 'native') return null;
   return 'Yedek dosyası açıldı — kalıcı kaydetmek için paylaş/kaydet seçeneğini kullan.';
 }
 
@@ -1269,7 +1277,52 @@ const DRIVE_SCRIPT = `function doPost(e) {
   return ContentService.createTextOutput('ok');
 }`;
 function driveUrl() { try { return localStorage.getItem('sevkiyat_drive_url') || ''; } catch (e) { return ''; } }
+/* ---- kendi APK'mızın yerel köprüsü (window.SevkNative) ---- */
+const NATIVE = window.SevkNative || null;
+async function nativePut(slot, blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (!NATIVE.begin(slot)) throw new Error('Dosya hazırlanamadı');
+  const CH = 3 * 256 * 1024;
+  for (let i = 0; i < bytes.length; i += CH) {
+    const part = bytes.subarray(i, i + CH);
+    let str = '';
+    for (let j = 0; j < part.length; j += 0x8000) str += String.fromCharCode.apply(null, part.subarray(j, j + 0x8000));
+    if (!NATIVE.append(slot, btoa(str))) throw new Error('Dosya yazılamadı');
+  }
+}
+function nativeDriveLinked() { try { return !!(NATIVE && NATIVE.driveLinked()); } catch (e) { return false; } }
+let _driveBusy = false, _driveAgain = null;
+window.onDriveDone = function (ok, err) {
+  _driveBusy = false;
+  try {
+    if (ok) { localStorage.setItem('sevkiyat_drive_last', String(Date.now())); localStorage.removeItem('sevkiyat_drive_err'); }
+    else localStorage.setItem('sevkiyat_drive_err', err || 'Yazılamadı');
+  } catch (e) {}
+  if (_driveAgain) { const b = _driveAgain; _driveAgain = null; driveUpload(b); }
+  renderSafe();
+};
+window.onDrivePicked = function (ok) {
+  if (ok === false) return;
+  try { localStorage.removeItem('sevkiyat_drive_err'); } catch (e) {}
+  createAutoBackup(todayISO(), true).then(() => {
+    state.successMsg = 'Drive bağlandı, ilk yedek yüklendi. Bundan sonra her işlemde otomatik.'; render();
+    setTimeout(() => { state.successMsg = ''; render(); }, 5000);
+  });
+};
 async function driveUpload(blob) {
+  if (nativeDriveLinked()) {
+    if (_driveBusy) { _driveAgain = blob; return false; }
+    _driveBusy = true;
+    try {
+      await nativePut('drive', blob instanceof Blob ? blob : new Blob([String(blob)], { type: 'application/json' }));
+      if (!NATIVE.driveWrite()) { _driveBusy = false; return false; }
+      return true;
+    } catch (e) {
+      _driveBusy = false;
+      try { localStorage.setItem('sevkiyat_drive_err', e && e.message ? e.message : String(e)); } catch (er) {}
+      return false;
+    }
+  }
   const url = driveUrl();
   if (!url) return false;
   try {
@@ -1282,7 +1335,37 @@ async function driveUpload(blob) {
     return false;
   }
 }
+function buildNativeDriveBox(container) {
+  const linked = nativeDriveLinked(), last = Number(localStorage.getItem('sevkiyat_drive_last')) || 0, err = localStorage.getItem('sevkiyat_drive_err') || '';
+  const box = h('div', { style: { background: 'var(--cream)', border: '1.5px solid ' + (linked ? 'var(--signed-border)' : 'var(--line)'), borderRadius: '10px', padding: '12px', marginBottom: '12px' } });
+  box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontWeight: '700', fontSize: '13.5px' } }, [
+    ic('uploadcloud', 14, linked ? 'var(--signed)' : 'var(--inkSoft)'), ' Google Drive Yedeği',
+    h('span', { style: { marginLeft: 'auto', fontSize: '11px', color: linked ? 'var(--signed)' : 'var(--inkSoft)', fontWeight: '600' } }, linked ? '● Bağlı' : '○ Bağlı değil'),
+  ]));
+  if (linked) {
+    let name = ''; try { name = NATIVE.driveName(); } catch (e) {}
+    box.appendChild(h('div', { style: { fontSize: '12.5px', color: 'var(--ink)', fontWeight: '600', marginBottom: '4px', wordBreak: 'break-all' } }, name));
+    box.appendChild(h('div', { style: { fontSize: '12px', color: 'var(--inkSoft)', lineHeight: '1.5', marginBottom: '8px' } },
+      'Her işlemden sonra yedek kendiliğinden bu dosyaya yazılır (Drive eski sürümleri de saklar). ' + (last ? 'Son yükleme: ' + new Date(last).toLocaleString('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Henüz yüklenmedi.')));
+    if (err) box.appendChild(h('div', { style: { fontSize: '11.5px', color: 'var(--stamp)', marginBottom: '6px' } }, 'Son deneme başarısız: ' + err));
+    const row = h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } });
+    row.appendChild(btn([ic('uploadcloud', 13), ' Şimdi yükle'], { onclick: async () => { await createAutoBackup(todayISO(), true); state.successMsg = 'Yedek Drive\'a gönderildi.'; render(); setTimeout(() => { state.successMsg = ''; render(); }, 4000); }, style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--ink)', 'var(--cream)'));
+    row.appendChild(btn([ic('drive', 13), ' Klasörü değiştir'], { onclick: () => NATIVE.drivePick(), style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)'));
+    row.appendChild(btn(['Kaldır'], { onclick: () => { NATIVE.driveForget(); render(); }, style: { fontSize: '12px', padding: '8px 10px' } }, 'none', 'var(--inkSoft)'));
+    box.appendChild(row);
+  } else {
+    box.appendChild(h('div', { style: { fontSize: '12.5px', color: 'var(--ink)', lineHeight: '1.6', marginBottom: '10px' } }, [
+      h('div', {}, 'Bir kez klasör seç, sonra her işlemden sonra yedek otomatik Drive\'a gider:'),
+      h('div', {}, '1) "Drive klasörü seç"e bas.'),
+      h('div', {}, '2) Açılan pencerede sol menüden Drive\'ı seç, yedek klasörünü aç.'),
+      h('div', {}, '3) "Kaydet"e bas — bitti.'),
+    ]));
+    box.appendChild(btn([ic('drive', 14), ' Drive klasörü seç'], { onclick: () => NATIVE.drivePick(), style: { fontSize: '13px', padding: '10px 14px' } }, 'var(--ink)', 'var(--cream)'));
+  }
+  container.appendChild(box);
+}
 function buildDriveBox(container) {
+  if (NATIVE) return buildNativeDriveBox(container);
   const url = driveUrl(), last = Number(localStorage.getItem('sevkiyat_drive_last')) || 0, err = localStorage.getItem('sevkiyat_drive_err') || '';
   const box = h('div', { style: { background: 'var(--cream)', border: '1.5px solid var(--line)', borderRadius: '10px', padding: '12px', marginBottom: '12px' } });
   box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontWeight: '700', fontSize: '13.5px' } }, [
@@ -2942,6 +3025,7 @@ async function shareShipmentImage(s) {
   try {
     const blob = await shipmentImageBlob(s);
     const fname = 'sevkiyat-' + String(s.seq).padStart(4, '0') + '-' + String(s.company || '').replace(/[^\wçğıöşüÇĞİÖŞÜ]+/g, '-').slice(0, 30) + '.png';
+    if (NATIVE) { await nativePut('share', blob); NATIVE.share(fname, 'image/png', ''); return; }
     const file = new File([blob], fname, { type: 'image/png' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try { await navigator.share({ files: [file], title: s.company, text: s.company + ' · #' + String(s.seq).padStart(4, '0') }); return; }

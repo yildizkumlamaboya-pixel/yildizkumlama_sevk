@@ -1,0 +1,47 @@
+name: Sevkiyat APK oluştur
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', '.github/workflows/apk.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Sabit imza anahtarı (önbellek)
+        id: kscache
+        uses: actions/cache@v4
+        with:
+          path: android/ci.keystore
+          key: sevkiyat-ci-keystore-v1
+      - name: İmza anahtarı yoksa oluştur
+        if: steps.kscache.outputs.cache-hit != 'true'
+        run: keytool -genkeypair -keystore android/ci.keystore -alias ci -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Yildiz Kumlama Boya, O=Yildiz Kumlama Boya, C=TR"
+      - name: APK derle
+        working-directory: android
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          set -o pipefail
+          gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log || { grep -E "error:|\.java:[0-9]+: |What went wrong" -A2 build.log | head -40 | while IFS= read -r l; do echo "::error::$l"; done; exit 1; }
+      - run: cp android/app/build/outputs/apk/release/app-release.apk Sevkiyat.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sevkiyat-apk
+          path: Sevkiyat.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: Sevkiyat APK ${{ github.run_number }}
+          make_latest: true
+          files: Sevkiyat.apk
