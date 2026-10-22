@@ -1,2 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources><string name="app_name">Sevkiyat</string></resources>
+<resources>
+    <string name="app_name">Sevkiyat</string>
+    <string name="widget_desc">Tek dokunuşla yeni sevkiyat veya sesli asistanla sevkiyat girişi</string>
+</resources>

@@ -11,6 +11,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
 import android.util.Base64;
 import android.view.View;
 import android.webkit.JavascriptInterface;
@@ -25,6 +26,7 @@ import android.webkit.WebViewClient;
 import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
+import androidx.documentfile.provider.DocumentFile;
 
 import org.json.JSONObject;
 
@@ -47,7 +49,11 @@ public class MainActivity extends Activity {
     static final String HOST = "yildiz-kumlama.vercel.app";
     static final String AUTH = "com.yildiz.sevkiyat.files";
     static final String MIC = android.Manifest.permission.RECORD_AUDIO, CAM = android.Manifest.permission.CAMERA;
-    static final int RC_FILE = 2, RC_WEBPERM = 3, RC_CAMFILE = 5, RC_DRIVE = 8, RC_SAVE = 9;
+    static final int RC_FILE = 2, RC_WEBPERM = 3, RC_CAMFILE = 5, RC_DRIVE = 8, RC_SAVE = 9, RC_MEDIA = 10;
+    static volatile boolean visible = false;
+    volatile String pendingAct = null;
+    volatile boolean pageReady = false;
+    final java.util.HashMap<String, DocumentFile> dirCache = new java.util.HashMap<>();
 
     WebView web;
     SharedPreferences prefs;
@@ -76,6 +82,12 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new Bridge(), "SevkNative");
 
         web.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView v, String url) {
+                pageReady = url != null && url.contains(HOST);
+                if (pageReady && pendingAct != null) checkAct();
+            }
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
                 Uri u = r.getUrl();
@@ -163,8 +175,40 @@ public class MainActivity extends Activity {
             }
         });
 
+        takeIntent(getIntent());
         if (state != null) web.restoreState(state);
         else web.loadUrl(URL);
+    }
+
+    @Override
+    protected void onNewIntent(Intent i) {
+        super.onNewIntent(i);
+        setIntent(i);
+        takeIntent(i);
+        if (pageReady) checkAct();
+    }
+
+    void takeIntent(Intent i) {
+        if (i == null) return;
+        String a = i.getStringExtra("act");
+        if (a == null && i.getData() != null && "sevkiyat".equals(i.getData().getScheme())) a = i.getData().getHost();
+        if (a != null) pendingAct = a;
+        i.removeExtra("act");
+    }
+
+    void checkAct() {
+        js("window.sevkCheckAct&&window.sevkCheckAct()");
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        visible = true;
+        BubbleService.appVisible(true);
+        if (prefs.getBoolean("bubble", false)) {
+            if (BubbleService.canDraw(this)) BubbleService.start(this);
+        }
+        js("window.sevkOnResume&&window.sevkOnResume()");
     }
 
     @Override
@@ -182,6 +226,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        visible = false;
+        BubbleService.appVisible(false);
         // Uygulamadan çıkarken bekleyen yedeği hemen al
         web.evaluateJavascript("window.sevkFlushBackup&&window.sevkFlushBackup()", null);
     }
@@ -295,6 +341,21 @@ public class MainActivity extends Activity {
             }).start();
             return;
         }
+        if (rc == RC_MEDIA) {
+            if (res == RESULT_OK && data != null && data.getData() != null) {
+                Uri u = data.getData();
+                try {
+                    getContentResolver().takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                } catch (Exception ignored) {
+                }
+                prefs.edit().putString("mediaTree", u.toString()).apply();
+                synchronized (dirCache) {
+                    dirCache.clear();
+                }
+                js("window.onMediaPicked&&window.onMediaPicked(true)");
+            } else js("window.onMediaPicked&&window.onMediaPicked(false)");
+            return;
+        }
         if (rc == RC_DRIVE) {
             if (res == RESULT_OK && data != null && data.getData() != null) {
                 Uri u = data.getData();
@@ -325,7 +386,213 @@ public class MainActivity extends Activity {
         return s == null ? null : Uri.parse(s);
     }
 
+    // ---------- fotoğraf ve imzalar: kullanıcının seçtiği telefon klasörü ----------
+    DocumentFile mediaRoot() {
+        String s = prefs.getString("mediaTree", null);
+        if (s == null) return null;
+        try {
+            DocumentFile r = DocumentFile.fromTreeUri(this, Uri.parse(s));
+            return r != null && r.canWrite() ? r : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    DocumentFile mediaDir(String dir, boolean create) {
+        synchronized (dirCache) {
+            DocumentFile d = dirCache.get(dir);
+            if (d != null && d.exists()) return d;
+            DocumentFile root = mediaRoot();
+            if (root == null) return null;
+            if (dirCache.isEmpty()) { // ilk kullanımda tüm alt klasörleri bir kerede listele (hızlı)
+                for (DocumentFile f : root.listFiles()) if (f.isDirectory() && f.getName() != null) dirCache.put(f.getName(), f);
+                d = dirCache.get(dir);
+                if (d != null) return d;
+            }
+            if (!create) return null;
+            d = root.createDirectory(dir);
+            if (d != null) dirCache.put(dir, d);
+            return d;
+        }
+    }
+
+    static String mimeOf(String name) {
+        String n = name.toLowerCase();
+        if (n.endsWith(".png")) return "image/png";
+        if (n.endsWith(".webp")) return "image/webp";
+        return "image/jpeg";
+    }
+
     class Bridge {
+        @JavascriptInterface
+        public String takeAct() {
+            String a = pendingAct;
+            pendingAct = null;
+            return a == null ? "" : a;
+        }
+
+        // ---------- fotoğraf / imza klasörü ----------
+        @JavascriptInterface
+        public void mediaPick() {
+            runOnUiThread(() -> {
+                try {
+                    Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+                    i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+                    startActivityForResult(i, RC_MEDIA);
+                } catch (Exception e) {
+                    toast("Klasör seçici açılamadı");
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public boolean mediaLinked() {
+            return mediaRoot() != null;
+        }
+
+        @JavascriptInterface
+        public String mediaName() {
+            DocumentFile r = mediaRoot();
+            if (r == null) return "";
+            String n = r.getName();
+            try {
+                String id = android.provider.DocumentsContract.getTreeDocumentId(r.getUri());
+                if (id != null && id.contains(":")) {
+                    String vol = id.substring(0, id.indexOf(':')), path = id.substring(id.indexOf(':') + 1);
+                    return ("primary".equals(vol) ? "Telefon hafızası" : "SD kart") + " / " + (path.isEmpty() ? "" : path);
+                }
+            } catch (Exception ignored) {
+            }
+            return n == null ? "Seçilen klasör" : n;
+        }
+
+        @JavascriptInterface
+        public void mediaForget() {
+            String s = prefs.getString("mediaTree", null);
+            if (s != null) try {
+                getContentResolver().releasePersistableUriPermission(Uri.parse(s), Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            } catch (Exception ignored) {
+            }
+            prefs.edit().remove("mediaTree").apply();
+            synchronized (dirCache) {
+                dirCache.clear();
+            }
+        }
+
+        /** dir/name dosyasını yazar (varsa üzerine). Yazılan bayt sayısını döndürür (0 = hata). */
+        @JavascriptInterface
+        public int mediaWrite(String dir, String name, String b64) {
+            try {
+                byte[] b = Base64.decode(b64, Base64.DEFAULT);
+                DocumentFile d = mediaDir(dir, true);
+                if (d == null) return 0;
+                DocumentFile f = d.findFile(name);
+                if (f == null) f = d.createFile(mimeOf(name), name);
+                if (f == null) return 0;
+                try (OutputStream os = getContentResolver().openOutputStream(f.getUri(), "wt")) {
+                    if (os == null) return 0;
+                    os.write(b);
+                }
+                return b.length;
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+
+        /** dir/name dosyasını base64 olarak okur ("" = yok). */
+        @JavascriptInterface
+        public String mediaRead(String dir, String name) {
+            try {
+                DocumentFile d = mediaDir(dir, false);
+                if (d == null) return "";
+                DocumentFile f = d.findFile(name);
+                if (f == null) return "";
+                try (InputStream is = getContentResolver().openInputStream(f.getUri())) {
+                    java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+                    byte[] b = new byte[65536];
+                    int n;
+                    while ((n = is.read(b)) > 0) bo.write(b, 0, n);
+                    return Base64.encodeToString(bo.toByteArray(), Base64.NO_WRAP);
+                }
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        @JavascriptInterface
+        public boolean mediaDelete(String dir, String name) {
+            try {
+                DocumentFile d = mediaDir(dir, false);
+                if (d == null) return false;
+                if (name == null || name.isEmpty()) {
+                    boolean ok = d.delete();
+                    synchronized (dirCache) {
+                        dirCache.remove(dir);
+                    }
+                    return ok;
+                }
+                DocumentFile f = d.findFile(name);
+                return f != null && f.delete();
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        // ---------- ana ekran kısayolları ----------
+        @JavascriptInterface
+        public boolean bubbleOn() {
+            return prefs.getBoolean("bubble", false) && BubbleService.canDraw(MainActivity.this);
+        }
+
+        @JavascriptInterface
+        public void bubbleSet(boolean on) {
+            prefs.edit().putBoolean("bubble", on).apply();
+            runOnUiThread(() -> {
+                if (!on) {
+                    BubbleService.stop(MainActivity.this);
+                    return;
+                }
+                if (BubbleService.canDraw(MainActivity.this)) {
+                    BubbleService.start(MainActivity.this);
+                    toast("Kısayollar uygulamadan çıkınca ekranda görünür");
+                } else {
+                    toast("\"Diğer uygulamaların üzerinde göster\" iznini aç, sonra geri dön");
+                    try {
+                        startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName())));
+                    } catch (Exception ignored) {
+                    }
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public boolean addWidget() {
+            try {
+                android.appwidget.AppWidgetManager m = getSystemService(android.appwidget.AppWidgetManager.class);
+                return m != null && m.isRequestPinAppWidgetSupported() && m.requestPinAppWidget(new android.content.ComponentName(MainActivity.this, QuickWidget.class), null, null);
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public boolean addShortcut(String act) {
+            try {
+                android.content.pm.ShortcutManager sm = getSystemService(android.content.pm.ShortcutManager.class);
+                if (sm == null || !sm.isRequestPinShortcutSupported()) return false;
+                boolean voice = "voice".equals(act);
+                android.content.pm.ShortcutInfo si = new android.content.pm.ShortcutInfo.Builder(MainActivity.this, voice ? "sc_voice" : "sc_new")
+                        .setShortLabel(voice ? "Sesli sevkiyat" : "Yeni sevkiyat")
+                        .setLongLabel(voice ? "Sesli asistanla yeni sevkiyat" : "Yeni sevkiyat gir")
+                        .setIcon(android.graphics.drawable.Icon.createWithResource(MainActivity.this, voice ? R.drawable.sc_voice : R.drawable.sc_new))
+                        .setIntent(QuickWidget.actIntent(MainActivity.this, voice ? "voice" : "new"))
+                        .build();
+                return sm.requestPinShortcut(si, null);
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
         /** Yeni bir dosya hazırlığına başla (slot: file / share / drive). */
         @JavascriptInterface
         public boolean begin(String slot) {

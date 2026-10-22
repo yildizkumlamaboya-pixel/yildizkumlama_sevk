@@ -111,9 +111,131 @@ function compressImage(file, maxDim, quality) {
     reader.onerror = reject; reader.readAsDataURL(file);
   });
 }
-function photoThumb(p) { return typeof p === 'string' ? p : p.thumb; }
-function photoPdf(p) { return typeof p === 'string' ? p : (p.pdf || p.thumb); }
+const PH_IMG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" rx="14" fill="#EEF2F7"/><rect x="72" y="46" width="56" height="96" rx="10" fill="none" stroke="#94A3B8" stroke-width="7"/><circle cx="100" cy="128" r="5" fill="#94A3B8"/><text x="100" y="178" font-family="sans-serif" font-size="21" font-weight="700" text-anchor="middle" fill="#64748B">Telefonda</text></svg>');
+const isDevRef = (x) => typeof x === 'string' && x.indexOf('dev:') === 0;
+function devSrc(x) { return isDevRef(x) ? PH_IMG : x; }
+function photoThumb(p) { return devSrc(typeof p === 'string' ? p : p.thumb); }
+function photoPdf(p) { return devSrc(typeof p === 'string' ? p : (p.pdf || p.thumb)); }
 function photoOriginal(p) { return typeof p === 'string' ? p : (p.original || p.pdf || p.thumb); }
+
+/* ============================== fotoğraf + imzalar telefonda (seçilen klasör) ==============================
+   Fotoğraf ve imzalar kullanıcının seçtiği telefon klasörüne dosya olarak yazılır; buluta (Supabase) yalnızca
+   "dev:klasör/dosya" adresleri gider. Uygulamada görüntü için cihazdaki kopyası (IndexedDB) kullanılır. */
+function mediaOn() { try { return !!(window.SevkNative && window.SevkNative.mediaLinked && window.SevkNative.mediaLinked()); } catch (e) { return false; } }
+function devSplit(ref) { const p = ref.slice(4), i = p.lastIndexOf('/'); return [p.slice(0, i), p.slice(i + 1)]; }
+function fastKey(str) {
+  let hh = 2166136261; const n = str.length, step = Math.max(1, Math.floor(n / 512));
+  for (let i = 0; i < n; i += step) { hh ^= str.charCodeAt(i); hh = Math.imul(hh, 16777619); }
+  for (let i = Math.max(0, n - 64); i < n; i++) { hh ^= str.charCodeAt(i); hh = Math.imul(hh, 16777619); }
+  return n.toString(36) + (hh >>> 0).toString(36);
+}
+function mediaDirName(r) { return (r.date || todayISO()) + '_' + String(r.seq || 0).padStart(4, '0') + '_' + (String(r.company || 'FIRMA').replace(/[^0-9A-Za-zÇĞİÖŞÜçğıöşü]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'FIRMA'); }
+function dataUrlParts(u) { const s = String(u || ''); const c = s.indexOf(','); if (s.slice(0, 5) !== 'data:' || c < 0) return null; const head = s.slice(5, c); if (!/;base64$/.test(head)) return null; return { mime: head.replace(';base64', ''), b64: s.slice(c + 1) }; }
+function mediaKeyOf(d) { return isDevRef(d) ? d : fastKey(String(d || '')); }
+function mediaSum(r) { return (r.photos || []).map((p) => mediaKeyOf(photoOriginal(p))).join('|') + '#' + (r.signature ? mediaKeyOf(r.signature) : ''); }
+function recHasLocalMedia(r) { return (r.photos || []).some((p) => !isDevRef(photoOriginal(p))) || (!!r.signature && !isDevRef(r.signature)); }
+/** Kaydın fotoğraf/imzalarını telefondaki klasöre yazar, r.media'ya adresleri koyar. Başarılıysa true. */
+function ensureMedia(r) {
+  if (!r || !mediaOn()) return false;
+  if (!(r.photos || []).length && !r.signature && !r.media) return true;
+  const sum = mediaSum(r);
+  if (r.media && r.media.sum === sum) return true;
+  const old = r.media || {}, dir = old.dir || mediaDirName(r);
+  const files = new Set(old.files || []), used = new Set();
+  const N = window.SevkNative;
+  const put = (data, prefix) => {
+    if (isDevRef(data)) { const sp = devSplit(data); if (sp[0] === dir) used.add(sp[1]); return data; }
+    const pp = dataUrlParts(data); if (!pp) return null;
+    const ext = pp.mime === 'image/png' ? 'png' : pp.mime === 'image/webp' ? 'webp' : 'jpg';
+    const name = prefix + '-' + fastKey(data) + '.' + ext;
+    if (!files.has(name)) { if (!(N.mediaWrite(dir, name, pp.b64) > 0)) throw new Error('Telefona yazılamadı'); files.add(name); }
+    used.add(name);
+    return 'dev:' + dir + '/' + name;
+  };
+  try {
+    const photos = (r.photos || []).map((p) => put(photoOriginal(p), 'foto'));
+    if (photos.some((x) => !x)) return false;
+    const sig = r.signature ? put(r.signature, 'imza') : null;
+    if (r.signature && !sig) return false;
+    files.forEach((n) => { if (!used.has(n)) { try { N.mediaDelete(dir, n); } catch (e) {} files.delete(n); } });
+    r.media = { dir, photos, sig, files: Array.from(files), sum };
+    return true;
+  } catch (e) { state.mediaError = e && e.message ? e.message : String(e); return false; }
+}
+/** Buluta gidecek fotoğraf/imza alanları: klasöre yazılmışsa sadece adresler. */
+function rowMedia(r) {
+  if (mediaOn() && recHasLocalMedia(r)) ensureMedia(r);
+  const m = r.media && r.media.sum === mediaSum(r) ? r.media : null;
+  if (m) return { photos: m.photos, sig: m.sig || null };
+  return { photos: Array.isArray(r.photos) ? r.photos : [], sig: r.signature || null };
+}
+/** Buluttan gelen adresli kaydı, cihazdaki eski kopyasındaki görüntülerle eşleştirir. */
+function adoptLocalMedia(r, ex) {
+  if (!r || !r.media) return r;
+  if (ex && ex.media) {
+    r.photos = (r.photos || []).map((p) => {
+      if (!isDevRef(p)) return p;
+      const i = (ex.media.photos || []).indexOf(p);
+      return i >= 0 && ex.photos && ex.photos[i] && !isDevRef(photoOriginal(ex.photos[i])) ? ex.photos[i] : p;
+    });
+    if (isDevRef(r.signature) && ex.media.sig === r.signature && ex.signature && !isDevRef(ex.signature)) r.signature = ex.signature;
+    r.media.files = Array.from(new Set((r.media.files || []).concat(ex.media.dir === r.media.dir ? (ex.media.files || []) : [])));
+  }
+  r.media.sum = mediaSum(r);
+  return r;
+}
+function mediaFromRefs(photos, sig) {
+  const refs = (photos || []).filter(isDevRef).concat(isDevRef(sig) ? [sig] : []);
+  if (!refs.length) return null;
+  const dir = devSplit(refs[0])[0];
+  return { dir, photos: (photos || []).slice(), sig: sig || null, files: refs.map((x) => devSplit(x)[1]), sum: '' };
+}
+/** Adres olarak duran fotoğraf/imzaları telefondaki klasörden okuyup görüntülenebilir yapar. */
+let _resolving = false;
+async function resolveDeviceMedia() {
+  if (_resolving || !mediaOn()) return;
+  _resolving = true;
+  try {
+    const N = window.SevkNative; let changed = 0;
+    const read = (ref) => { const sp = devSplit(ref); const b = N.mediaRead(sp[0], sp[1]); if (!b) return ref; const ext = sp[1].split('.').pop(); return 'data:' + (ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg') + ';base64,' + b; };
+    for (const r of state.shipments.concat(state.trash)) {
+      const need = (r.photos || []).some((p) => isDevRef(photoOriginal(p))) || isDevRef(r.signature);
+      if (!need) continue;
+      if (!r.media) r.media = mediaFromRefs(r.photos, r.signature);
+      r.photos = (r.photos || []).map((p) => (isDevRef(photoOriginal(p)) ? read(photoOriginal(p)) : p));
+      if (isDevRef(r.signature)) r.signature = read(r.signature);
+      r.media.sum = mediaSum(r);
+      try { await dbPutRaw(r); } catch (e) {}
+      if (++changed % 5 === 0) { renderSafe(); await new Promise((res) => setTimeout(res, 0)); }
+    }
+    if (changed) renderSafe();
+  } finally { _resolving = false; }
+}
+/** Klasör seçilince: eski kayıtların fotoğraf/imzalarını telefona yaz, buluttakileri adresle değiştir (Supabase küçülür). */
+async function migrateMediaToDevice() {
+  if (!mediaOn() || state.mediaMig) return;
+  const list = state.shipments.filter(recHasLocalMedia);
+  state.mediaMig = { done: 0, total: list.length }; state.mediaError = ''; renderSafe();
+  let ok = true;
+  for (const r of list) {
+    if (!ensureMedia(r)) { ok = false; break; }
+    try { await dbPutRaw(r); } catch (e) {}
+    if (supabaseClient) { const pushed = await cloudPushShipment(r).catch(() => false); if (pushed === false) ok = false; }
+    state.mediaMig.done++;
+    if (state.mediaMig.done % 3 === 0) { renderSafe(); await new Promise((res) => setTimeout(res, 0)); }
+  }
+  if (ok) { try { localStorage.setItem('sevkiyat_media_mig', '1'); } catch (e) {} }
+  const n = state.mediaMig.done;
+  state.mediaMig = null;
+  state.successMsg = ok ? (n ? n + ' kaydın fotoğraf ve imzaları telefona taşındı; bulutta artık sadece yazılar var.' : 'Fotoğraf ve imzalar bundan sonra telefonda saklanacak.') : 'Bazı fotoğraflar taşınamadı: ' + (state.mediaError || 'internet/izin sorunu') + '. Sonra tekrar denenecek.';
+  render(); setTimeout(() => { state.successMsg = ''; render(); }, 7000);
+}
+window.onMediaPicked = function (ok) {
+  if (!ok) return;
+  try { localStorage.removeItem('sevkiyat_media_mig'); } catch (e) {}
+  migrateMediaToDevice();
+};
+function mediaRemoveRec(r) { try { if (r && r.media && r.media.dir && mediaOn()) window.SevkNative.mediaDelete(r.media.dir, ''); } catch (e) {} }
 function photoName(p, idx) { return (typeof p === 'string' ? null : p.name) || ('sevkiyat-foto-' + (idx + 1) + '.jpg'); }
 
 /* ============================== IndexedDB ============================== */
@@ -180,6 +302,10 @@ window.sevkFlushBackup = function () { if (_abTimer) { clearTimeout(_abTimer); r
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') window.sevkFlushBackup(); });
 async function dbPut(record) {
   setTimeout(scheduleAutoBackup, 0);
+  if (record && recHasLocalMedia(record) && mediaOn()) ensureMedia(record);
+  return dbPutRaw(record);
+}
+async function dbPutRaw(record) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(DB_STORE, 'readwrite');
@@ -272,6 +398,7 @@ function unmarkRestored(id) { const i = state.pendingRestores.indexOf(id); if (i
 
 /* ---- app kaydı  ⇄  shipments satırı eşlemesi ---- */
 function shipmentToRow(r) {
+  const md = rowMedia(r);
   return {
     client_id:    r.id,
     seq:          r.seq || 0,
@@ -284,8 +411,8 @@ function shipmentToRow(r) {
     weight:       r.tonnage ? (parseFloat(r.tonnage) || null) : null,
     unit:         r.tonnageUnit || 'adet',
     details:      r.paintDetails || '',
-    signature_url: r.signature || null,
-    photos:       Array.isArray(r.photos) ? r.photos : [],
+    signature_url: md.sig,
+    photos:       md.photos,
     invoiced:     !!r.invoiced,
     unit_price:   (r.unitPrice  !== undefined && r.unitPrice  !== '' && !isNaN(parseFloat(r.unitPrice)))  ? parseFloat(r.unitPrice)  : null,
     paint_cost:   (r.paintCost  !== undefined && r.paintCost  !== '' && !isNaN(parseFloat(r.paintCost)))  ? parseFloat(r.paintCost)  : null,
@@ -297,6 +424,12 @@ function shipmentToRow(r) {
   };
 }
 function rowToShipment(row) {
+  const rec = rowToShipment0(row);
+  const m = mediaFromRefs(rec.photos, rec.signature);
+  if (m) { rec.media = m; m.sum = mediaSum(rec); }
+  return rec;
+}
+function rowToShipment0(row) {
   return {
     id:           row.client_id || ('cloud-' + row.id),
     seq:          row.seq || 0,
@@ -511,7 +644,7 @@ async function syncFromCloud() {
       const existing = localMap.get(r.id);
       const rTs = r.updatedAt || r.createdAt || 0;
       const lTs = existing ? (existing.updatedAt || existing.createdAt || 0) : -1;
-      if (!existing || rTs > lTs) localMap.set(r.id, r);
+      if (!existing || rTs > lTs) localMap.set(r.id, adoptLocalMedia(r, existing));
     });
     const merged = reindexSearch(Array.from(localMap.values())).sort(
       (a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0)
@@ -555,6 +688,14 @@ async function syncFromCloud() {
   }
   state.cloudSyncing = false;
   renderSafe();
+  mediaAfterSync();
+}
+function mediaAfterSync() {
+  if (!mediaOn()) return;
+  resolveDeviceMedia().then(() => {
+    let m = ''; try { m = localStorage.getItem('sevkiyat_media_mig') || ''; } catch (e) {}
+    if (m !== '1') migrateMediaToDevice();
+  }).catch(() => {});
 }
 function renderSafe() {
   // Arka plan senkronu ekranı yenilerken klavyeyi kapatmasın / formu sıfırlamasın.
@@ -625,7 +766,7 @@ const PDF_PAGE_W = 595, PDF_PAGE_H = 842;
 
 async function buildReceiptPageContent(s) {
   const pageW = PDF_PAGE_W, pageH = PDF_PAGE_H, margin = 50;
-  const sigJpeg = s.signature ? await pngToJpegDataUrl(s.signature) : null;
+  const sigJpeg = s.signature && !isDevRef(s.signature) ? await pngToJpegDataUrl(s.signature) : null;
   const sigDims = sigJpeg ? await getImageDims(sigJpeg) : null;
   const photos = (s.photos || []).map(photoPdf);
   const photoDims = await Promise.all(photos.map((p) => getImageDims(p)));
@@ -1086,7 +1227,7 @@ function collectLocalSettings() {
   } catch (e) {}
   return settings;
 }
-function buildTextBackupPayload() {
+function buildTextBackupPayload(lite) {
   // TAM YEDEK: tüm sevkiyatlar (fotoğraf + imza dahil), çöp kutusu, teklifler ve ayarlar.
   const exportedAt = new Date().toISOString();
   const shipments = backupRangeFilter(state.shipments);
@@ -1097,7 +1238,9 @@ function buildTextBackupPayload() {
   const parts = ['{"app":"sevkiyat-pwa","version":4,"exportedAt":' + JSON.stringify(exportedAt) + ',"photosIncluded":true,"dateRanged":' + (ranged ? 'true' : 'false') + ',"count":' + shipments.length + ',"shipments":['];
   for (let i = 0; i < all.length; i++) {
     if (i > 0) parts.push(',');
-    parts.push(JSON.stringify(Object.assign({}, all[i], { _searchIdx: undefined })));
+    const rec = Object.assign({}, all[i], { _searchIdx: undefined });
+    if (lite && rec.media && rec.media.sum === mediaSum(all[i])) { rec.photos = rec.media.photos; rec.signature = rec.media.sig || null; } // bulut yedeği: görüntüler telefonda, sadece adresleri
+    parts.push(JSON.stringify(rec));
   }
   parts.push('],"quotes":' + JSON.stringify(quotes) + ',"settings":' + JSON.stringify(collectLocalSettings()) + '}');
   const blob = new Blob(parts, { type: 'application/json' });
@@ -1217,8 +1360,9 @@ async function createAutoBackup(dayKey, force) {
     const savedFrom = state.backupDateFrom, savedTo = state.backupDateTo;
     state.backupDateFrom = ''; state.backupDateTo = '';
     let built;
-    try { built = buildTextBackupPayload(); } finally { state.backupDateFrom = savedFrom; state.backupDateTo = savedTo; }
-    await abPut({ day, at: Date.now(), shipments: built.counts.shipments, quotes: built.counts.quotes, size: built.bytes.size, blob: built.bytes });
+    let lite;
+    try { built = buildTextBackupPayload(); lite = mediaOn() && supabaseClient ? buildTextBackupPayload(true) : built; } finally { state.backupDateFrom = savedFrom; state.backupDateTo = savedTo; }
+    await abPut({ day, at: Date.now(), shipments: built.counts.shipments, quotes: built.counts.quotes, size: lite.bytes.size, blob: lite.bytes });
     markBackupDone();
     driveUpload(built.bytes).catch(() => {});
     const list = await abList();
@@ -1406,6 +1550,7 @@ function buildDriveBox(container) {
   container.appendChild(box);
 }
 function buildAutoBackupBox(container) {
+  buildMediaBox(container);
   buildDriveBox(container);
   if (!state._abLoaded) { state._abLoaded = true; refreshAutoBackups(); }
   const on = autoBackupEnabled();
@@ -1883,6 +2028,7 @@ async function askAssistant(text, fromVoice) {
     if (!supabaseClient) throw new Error('Asistan için internet ve bulut bağlantısı gerekir.');
     const companies = Array.from(new Set(state.shipments.map((s) => s.company).filter(Boolean))).slice(0, 150);
     const hist = assistantLog().flatMap((x) => [{ r: 'u', t: x.u }, { r: 'a', t: x.a }]);
+    if (audio && state.assistantNewHint) { state.assistantNewHint = false; text = 'Yeni sevkiyat girmek istiyorum. Ses kaydında söylediklerimle yeni sevkiyat formunu doldurup aç (islem=ac, hedef=yeni_sevkiyat). Söylemediğim alanları boş bırak.'; }
     const body = { metin: text, firmalar: companies, bugun: todayISO(), veri: assistantData(), gecmis: hist };
     if (audio) { body.ses = audio.ses; body.sesTip = audio.tip; }
     const res = await supabaseClient.functions.invoke('ai-sevkiyat', { body });
@@ -1916,13 +2062,13 @@ async function askAssistant(text, fromVoice) {
   setTimeout(() => { const L = document.getElementById('ai-log'); if (L) L.scrollTop = L.scrollHeight; }, 30);
 }
 function renderAssistantModal() {
-  const overlay = h('div', { style: { position: 'fixed', inset: '0', background: 'rgba(17,24,39,.55)', zIndex: '70', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }, onclick: () => { assistantStopSpeak(); state.assistantOpen = false; render(); } });
+  const overlay = h('div', { style: { position: 'fixed', inset: '0', background: 'rgba(17,24,39,.55)', zIndex: '70', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }, onclick: () => { assistantStopSpeak(); state.assistantOpen = false; state.assistantNewHint = false; render(); } });
   const box = h('div', { onclick: (e) => e.stopPropagation(), style: { background: 'var(--paper)', width: '100%', maxWidth: '560px', borderRadius: '22px 22px 0 0', padding: '14px 14px calc(14px + env(safe-area-inset-bottom))', boxShadow: '0 -12px 40px rgba(0,0,0,.3)', display: 'flex', flexDirection: 'column', maxHeight: '86vh' } });
   box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' } }, [
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '7px', fontWeight: '800', fontSize: '15px' } }, [ic('sparkle', 17, 'var(--accent)'), ' Asistan']),
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } }, [
       h('span', { onclick: assistantToggleSpeak, title: 'Sesli cevap', style: { cursor: 'pointer', color: state.assistantSpeak ? 'var(--accent)' : 'var(--inkSoft)', padding: '4px', display: 'inline-flex' } }, [ic(state.assistantSpeak ? 'speaker' : 'speakeroff', 22)]),
-      h('span', { onclick: () => { assistantStopSpeak(); state.assistantOpen = false; render(); }, style: { cursor: 'pointer', color: 'var(--inkSoft)', fontWeight: '700', padding: '4px 6px', fontSize: '16px' } }, '✕'),
+      h('span', { onclick: () => { assistantStopSpeak(); state.assistantOpen = false; state.assistantNewHint = false; render(); }, style: { cursor: 'pointer', color: 'var(--inkSoft)', fontWeight: '700', padding: '4px 6px', fontSize: '16px' } }, '✕'),
     ]),
   ]));
   const log = h('div', { id: 'ai-log', style: { overflowY: 'auto', flex: '1', minHeight: '28vh', maxHeight: '52vh', padding: '2px', display: 'flex', flexDirection: 'column', gap: '8px' } });
@@ -1983,7 +2129,7 @@ function applyRecords(list) {
 async function purgeExpiredTrash() {
   const limit = Date.now() - TRASH_DAYS * 86400000;
   const old = state.trash.filter((t) => (t.deletedAt || 0) < limit);
-  for (const t of old) { try { await dbDelete(t.id); } catch (e) {} }
+  for (const t of old) { try { await dbDelete(t.id); mediaRemoveRec(t); } catch (e) {} }
   if (old.length) state.trash = state.trash.filter((t) => (t.deletedAt || 0) >= limit);
 }
 async function loadAll() {
@@ -2000,8 +2146,9 @@ async function loadAll() {
   await ensurePersistentStorage();
   await refreshStorageInfo();
   render();
-  if (supabaseClient) { syncFromCloud().catch(() => {}); }
+  if (supabaseClient) { syncFromCloud().catch(() => {}); } else mediaAfterSync();
   setTimeout(() => { maybeDailyAutoBackup(); }, 5000);
+  setTimeout(() => { window.sevkCheckAct(); }, 50);
 }
 async function refreshStorageInfo() {
   try {
@@ -2462,6 +2609,7 @@ async function confirmRestore() {
     setTimeout(() => { state.successMsg = ''; render(); }, 5000);
     await refreshStorageInfo();
     if (supabaseClient) cloudPushAll(state.shipments, state.quotes).catch(() => {});
+    mediaAfterSync();
   } catch (e) { state.error = 'Geri yükleme başarısız oldu.'; }
   state.restoreBusy = false; state.pendingRestore = null; render();
 }
@@ -3228,6 +3376,7 @@ function renderFormView() {
   });
   rebuildPhotoGrid();
   photoField.appendChild(photoGrid); photoField.appendChild(photoFileInput);
+  if (window.SevkNative && window.SevkNative.mediaLinked && !mediaOn()) photoField.appendChild(h('div', { onclick: () => window.SevkNative.mediaPick(), style: { marginTop: '8px', fontSize: '12px', color: 'var(--accent)', fontWeight: '600', cursor: 'pointer' } }, '📁 Fotoğraf ve imzalar buluta değil telefona kaydedilsin — klasör seç'));
   photoField.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--inkSoft)', marginTop: '6px' } }, 'En fazla 6 görsel — yazı okunabilir kalitede, tek versiyon olarak saklanır.'));
   container.appendChild(field([ic('camera', 13), ' Yükleme Görselleri'], photoField));
 
@@ -3284,7 +3433,7 @@ function renderDetailView() {
 
   container.appendChild(h('div', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--steel)', marginBottom: '8px' } }, 'Şoför İmzası'));
   container.appendChild(s.signature
-    ? h('div', { style: { background: 'var(--cream)', border: '1.5px solid var(--line)', borderRadius: '6px', padding: '10px', marginBottom: '16px' } }, [h('img', { src: s.signature, style: { height: '100px' } })])
+    ? h('div', { style: { background: 'var(--cream)', border: '1.5px solid var(--line)', borderRadius: '6px', padding: '10px', marginBottom: '16px' } }, [h('img', { src: devSrc(s.signature), style: { height: '100px' } })])
     : h('div', { style: { color: 'var(--inkSoft)', fontSize: '13px', border: '1.5px dashed var(--line)', borderRadius: '6px', padding: '14px 16px', marginBottom: '16px' } }, 'İmza alınmamış'));
 
   container.appendChild(h('div', { style: { fontSize: '11px', fontWeight: '600', letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--steel)', marginBottom: '8px' } }, 'Yükleme Görselleri'));
@@ -3367,7 +3516,7 @@ function renderReceiptView() {
 
   container.appendChild(h('div', { className: 'label', style: { marginTop: '18px' } }, 'Şoför İmzası'));
   container.appendChild(s.signature
-    ? h('div', { style: { background: 'var(--cream)', border: '1.5px solid var(--line)', borderRadius: '12px', padding: '10px', marginBottom: '16px' } }, [h('img', { src: s.signature, style: { height: '100px' } })])
+    ? h('div', { style: { background: 'var(--cream)', border: '1.5px solid var(--line)', borderRadius: '12px', padding: '10px', marginBottom: '16px' } }, [h('img', { src: devSrc(s.signature), style: { height: '100px' } })])
     : h('div', { style: { color: 'var(--inkSoft)', fontSize: '13px', border: '1.5px dashed var(--line)', borderRadius: '12px', padding: '14px 16px', marginBottom: '16px' } }, 'İmza alınmamış'));
 
   container.appendChild(h('div', { className: 'label' }, 'Yükleme Görselleri'));
@@ -4344,7 +4493,7 @@ async function restoreFromTrash(s) {
   render();
 }
 async function purgeFromTrash(ids) {
-  try { for (const id of ids) { await dbDelete(id); } state.trash = state.trash.filter((x) => ids.indexOf(x.id) === -1); }
+  try { for (const id of ids) { await dbDelete(id); mediaRemoveRec(state.trash.find((x) => x.id === id)); } state.trash = state.trash.filter((x) => ids.indexOf(x.id) === -1); }
   catch (e) { state.error = 'Silinemedi.'; }
   state.pendingPurge = null; render();
 }
@@ -4973,7 +5122,7 @@ function pressPin(d) {
   if (state.pinInput.length >= 4) return;
   state.pinInput += d; state.pinError = false;
   if (state.pinInput.length === 4) {
-    if (state.pinInput === getPin()) { touchActive(); state.locked = false; state.pinInput = ''; render(); return; }
+    if (state.pinInput === getPin()) { touchActive(); state.locked = false; state.pinInput = ''; render(); setTimeout(() => window.sevkCheckAct(), 50); return; }
     state.pinError = true; render();
     setTimeout(() => { state.pinInput = ''; render(); }, 450);
     return;
@@ -5045,6 +5194,7 @@ function render() {
   if (state.pendingCostEdit) app.appendChild(renderCostEditModal());
   if (state.uiExpanded.backup) app.appendChild(renderBackupMenu());
   if (state.assistantOpen) app.appendChild(renderAssistantModal());
+  if (state.shortcutsOpen) app.appendChild(renderShortcutsModal());
   if (state.wa) app.appendChild(renderWhatsAppModal());
   if (showNav) app.appendChild(renderBottomNav());
   if (state.navMenuOpen) app.appendChild(renderNavMenu());
@@ -5065,6 +5215,64 @@ function gotoTab(view) {
   if (state.view === view) { window.scrollTo(0, 0); render(); return; }
   state.navStack = view === 'list' ? [] : ['list'];
   state.view = view; render(); window.scrollTo(0, 0);
+}
+/* ---- telefon ana ekranı kısayolları (kayan düğmeler, widget, ikon) ---- */
+window.sevkCheckAct = function () {
+  const N = window.SevkNative;
+  if (!N || !N.takeAct || state.loading || state.locked) return;
+  const a = N.takeAct();
+  if (a) sevkAction(a);
+};
+function sevkAction(a) {
+  state.navMenuOpen = false; state.uiExpanded.backup = false; state.shortcutsOpen = false;
+  if (a === 'new') { assistantStopSpeak(); state.assistantOpen = false; newShipment(); window.scrollTo(0, 0); return; }
+  if (a === 'voice') {
+    if (state.assistantRecorder || state.assistantRec) return;
+    state.assistantNewHint = true;
+    openAssistant();
+    state.assistantMsgs.push({ r: 'a', t: 'Yeni sevkiyatı söyle: firma, plaka, şoför, miktar…' });
+    render();
+    setTimeout(assistantMicToggle, 250);
+  }
+}
+function renderShortcutsModal() {
+  const N = window.SevkNative;
+  const overlay = h('div', { onclick: () => { state.shortcutsOpen = false; render(); }, style: { position: 'fixed', inset: '0', background: 'rgba(17,24,39,.55)', zIndex: '70', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' } });
+  const sheet = h('div', { className: 'sheet', onclick: (e) => e.stopPropagation(), style: { maxWidth: '520px', width: '100%' } });
+  sheet.appendChild(h('div', { style: { fontWeight: '800', fontSize: '17px', marginBottom: '4px' } }, 'Telefon ekranı kısayolları'));
+  sheet.appendChild(h('div', { style: { fontSize: '12.5px', color: 'var(--inkSoft)', lineHeight: '1.5', marginBottom: '14px' } }, 'Yeni sevkiyat ve sesli asistanla sevkiyat girişi tek dokunuşla açılır.'));
+  const row = (title, sub, right) => h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', borderTop: '1px solid var(--line)' } }, [
+    h('div', { style: { flex: '1', minWidth: '0' } }, [h('div', { style: { fontWeight: '700', fontSize: '14px' } }, title), h('div', { style: { fontSize: '12px', color: 'var(--inkSoft)', marginTop: '2px' } }, sub)]), right]);
+  const on = (() => { try { return N.bubbleOn(); } catch (e) { return false; } })();
+  sheet.appendChild(row('Ekranda kayan düğmeler', 'Her uygulamanın üstünde duran iki yuvarlak düğme. Sürükleyip kenara taşı; uzun basınca kapanır.',
+    h('label', { className: 'switch', style: { display: 'inline-flex', alignItems: 'center', cursor: 'pointer' } }, [h('input', { type: 'checkbox', checked: on, style: { width: '22px', height: '22px' }, onchange: (e) => { N.bubbleSet(e.target.checked); setTimeout(render, 400); } })])));
+  const msg = (ok) => { state.successMsg = ok ? 'Telefonun sorduğu pencerede "Ekle"ye bas.' : 'Bu telefon bunu desteklemiyor; widget listesinden "Sevkiyat kısayol"u ekleyebilirsin.'; render(); setTimeout(() => { state.successMsg = ''; render(); }, 5000); };
+  sheet.appendChild(row('Ana ekrana: Yeni sevkiyat', 'Ana ekranda ayrı bir simge olur.', btn([ic('plus', 14), ' Ekle'], { onclick: () => msg(N.addShortcut('new')), style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--ink)', 'var(--cream)')));
+  sheet.appendChild(row('Ana ekrana: Sesli sevkiyat', 'Basınca asistan dinlemeye başlar, söylediğin sevkiyatı forma doldurur.', btn([ic('mic', 14), ' Ekle'], { onclick: () => msg(N.addShortcut('voice')), style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--ink)', 'var(--cream)')));
+  sheet.appendChild(row('Widget (ikisi yan yana)', 'Ana ekrana iki düğmeli küçük bir kutu.', btn(['Ekle'], { onclick: () => msg(N.addWidget()), style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)')));
+  overlay.appendChild(sheet);
+  return overlay;
+}
+function buildMediaBox(container) {
+  const N = window.SevkNative;
+  if (!N || !N.mediaLinked) return;
+  const linked = mediaOn();
+  const box = h('div', { style: { background: 'var(--cream)', border: '1.5px solid ' + (linked ? 'var(--signed-border)' : 'var(--accent)'), borderRadius: '10px', padding: '12px', marginBottom: '12px' } });
+  box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontWeight: '700', fontSize: '13.5px' } }, [
+    ic('camera', 14, linked ? 'var(--signed)' : 'var(--accent)'), ' Fotoğraf ve İmzalar (telefonda)',
+    h('span', { style: { marginLeft: 'auto', fontSize: '11px', color: linked ? 'var(--signed)' : 'var(--inkSoft)', fontWeight: '600' } }, linked ? '● Klasör seçili' : '○ Seçilmedi'),
+  ]));
+  if (linked) {
+    let nm = ''; try { nm = N.mediaName(); } catch (e) {}
+    box.appendChild(h('div', { style: { fontSize: '12.5px', fontWeight: '600', marginBottom: '4px', wordBreak: 'break-all' } }, nm));
+    box.appendChild(h('div', { style: { fontSize: '12px', color: 'var(--inkSoft)', lineHeight: '1.5', marginBottom: '8px' } }, 'Her sevkiyatın fotoğraf ve imzası bu klasörde kendi alt klasörüne kaydedilir. Buluta yalnızca yazılar gider.'));
+    if (state.mediaMig) box.appendChild(h('div', { style: { fontSize: '12.5px', color: 'var(--accent)', fontWeight: '600', marginBottom: '8px' } }, 'Taşınıyor… ' + state.mediaMig.done + ' / ' + state.mediaMig.total));
+    box.appendChild(btn([ic('camera', 13), ' Klasörü değiştir'], { onclick: () => N.mediaPick(), style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)'));
+  } else {
+    box.appendChild(h('div', { style: { fontSize: '12.5px', lineHeight: '1.6', marginBottom: '10px' } }, 'Fotoğraf ve imzalar buluta gidip yer kaplamasın: telefonda bir klasör seç (örn. "Sevkiyat Fotoğrafları" adında yeni klasör oluştur → "Bu klasörü kullan" → İzin ver). Eski kayıtların fotoğrafları da oraya taşınır, buluttan kaldırılır.'));
+    box.appendChild(btn([ic('camera', 14), ' Telefonda klasör seç'], { onclick: () => N.mediaPick(), style: { fontSize: '13px', padding: '10px 14px' } }, 'var(--ink)', 'var(--cream)'));
+  }
+  container.appendChild(box);
 }
 function newShipment() {
   state.navMenuOpen = false;
@@ -5104,6 +5312,7 @@ function renderNavMenu() {
   NAV_ITEMS.filter((it) => ['prices', 'quotes', 'summary', 'paintcalc', 'trash'].indexOf(it.view) >= 0).forEach((it) => {
     grid.appendChild(tile(it.label, it.icon, () => gotoTab(it.view), state.view === it.view, it.badge ? it.badge() : 0));
   });
+  if (window.SevkNative && window.SevkNative.bubbleSet) grid.appendChild(tile('Kısayollar', 'plus', () => { state.navMenuOpen = false; state.shortcutsOpen = true; render(); }, false));
   grid.appendChild(tile('Yedekleme', 'drive', () => { state.navMenuOpen = false; state.uiExpanded.backup = true; render(); }, false, 0));
   grid.appendChild(tile(state.darkMode ? 'Açık Mod' : 'Karanlık Mod', 'moon', () => { state.darkMode = !state.darkMode; try { localStorage.setItem('sevkiyat_dark_mode', state.darkMode ? '1' : '0'); } catch (e) {} state.navMenuOpen = false; render(); }, false));
   if (state.pinEnabled) grid.appendChild(tile('Kilitle', 'lock', () => { state.navMenuOpen = false; lockApp(); }, false));
