@@ -61,6 +61,7 @@ const ICONS = {
   menu: '<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>',
   moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
   lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
 };
 function ic(name, size, color) {
@@ -165,7 +166,13 @@ async function dbGetAll() {
     req.onerror = () => reject(req.error);
   });
 }
+let _abTimer = null;
+function scheduleAutoBackup() { // değişiklikten 1 dk sonra (art arda değişikliklerde tek yedek) bugünkü yedeği güncelle
+  clearTimeout(_abTimer);
+  _abTimer = setTimeout(() => { createAutoBackup(todayISO(), true).then((ok) => { if (ok) render(); }).catch(() => {}); }, 60000);
+}
 async function dbPut(record) {
+  setTimeout(scheduleAutoBackup, 0);
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(DB_STORE, 'readwrite');
@@ -174,6 +181,7 @@ async function dbPut(record) {
   });
 }
 async function dbDelete(id) {
+  setTimeout(scheduleAutoBackup, 0);
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(DB_STORE, 'readwrite');
@@ -201,6 +209,7 @@ async function dbGetAllQuotes() {
   });
 }
 async function dbPutQuote(record) {
+  setTimeout(scheduleAutoBackup, 0);
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(QUOTE_STORE, 'readwrite');
@@ -1202,6 +1211,8 @@ async function createAutoBackup(dayKey, force) {
     let built;
     try { built = buildTextBackupPayload(); } finally { state.backupDateFrom = savedFrom; state.backupDateTo = savedTo; }
     await abPut({ day, at: Date.now(), shipments: built.counts.shipments, quotes: built.counts.quotes, size: built.bytes.size, blob: built.bytes });
+    markBackupDone();
+    driveUpload(built.bytes).catch(() => {});
     const list = await abList();
     const dated = list.filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.day));
     for (const old of dated.slice(AUTOBACKUP_KEEP)) { try { await abDelete(old.day); } catch (e) {} }
@@ -1243,7 +1254,76 @@ async function downloadAutoBackup(day) {
   } catch (e) { state.error = 'Yedek indirilemedi: ' + (e && e.message ? e.message : String(e)); }
   render();
 }
+/* ============================== Google Drive yedeği (Google Apps Script ile, kendi Drive hesabına) ============================== */
+const DRIVE_SCRIPT = `function doPost(e) {
+  var data = e.postData.contents;
+  var it = DriveApp.getFoldersByName('Sevkiyat Yedekleri');
+  var folder = it.hasNext() ? it.next() : DriveApp.createFolder('Sevkiyat Yedekleri');
+  var name = 'sevkiyat-yedek-' + Utilities.formatDate(new Date(), 'Europe/Istanbul', 'yyyy-MM-dd') + '.json';
+  var ex = folder.getFilesByName(name);
+  if (ex.hasNext()) ex.next().setContent(data); else folder.createFile(name, data, 'application/json');
+  var files = [], all = folder.getFiles();
+  while (all.hasNext()) files.push(all.next());
+  files.sort(function (a, b) { return b.getDateCreated() - a.getDateCreated(); });
+  for (var i = 30; i < files.length; i++) files[i].setTrashed(true);
+  return ContentService.createTextOutput('ok');
+}`;
+function driveUrl() { try { return localStorage.getItem('sevkiyat_drive_url') || ''; } catch (e) { return ''; } }
+async function driveUpload(blob) {
+  const url = driveUrl();
+  if (!url) return false;
+  try {
+    const text = blob instanceof Blob ? await blob.text() : String(blob);
+    await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: text });
+    try { localStorage.setItem('sevkiyat_drive_last', String(Date.now())); localStorage.removeItem('sevkiyat_drive_err'); } catch (e) {}
+    return true;
+  } catch (e) {
+    try { localStorage.setItem('sevkiyat_drive_err', e && e.message ? e.message : String(e)); } catch (er) {}
+    return false;
+  }
+}
+function buildDriveBox(container) {
+  const url = driveUrl(), last = Number(localStorage.getItem('sevkiyat_drive_last')) || 0, err = localStorage.getItem('sevkiyat_drive_err') || '';
+  const box = h('div', { style: { background: 'var(--cream)', border: '1.5px solid var(--line)', borderRadius: '10px', padding: '12px', marginBottom: '12px' } });
+  box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontWeight: '700', fontSize: '13.5px' } }, [
+    ic('uploadcloud', 14, url ? 'var(--signed)' : 'var(--inkSoft)'), ' Google Drive Yedeği',
+    h('span', { style: { marginLeft: 'auto', fontSize: '11px', color: url ? 'var(--signed)' : 'var(--inkSoft)', fontWeight: '600' } }, url ? '● Bağlı' : '○ Bağlı değil'),
+  ]));
+  if (url) {
+    box.appendChild(h('div', { style: { fontSize: '12px', color: 'var(--inkSoft)', lineHeight: '1.5', marginBottom: '8px' } },
+      'Her otomatik yedek Drive\'daki "Sevkiyat Yedekleri" klasörüne de yüklenir (son 30 gün). ' + (last ? 'Son yükleme: ' + new Date(last).toLocaleString('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '')));
+    if (err) box.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--stamp)', marginBottom: '6px' } }, 'Son deneme başarısız: ' + err));
+    const row = h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } });
+    row.appendChild(btn([ic('uploadcloud', 13), ' Şimdi Drive\'a Yükle'], { onclick: async () => { await createAutoBackup(todayISO(), true); state.successMsg = 'Drive\'a yüklendi.'; render(); setTimeout(() => { state.successMsg = ''; render(); }, 4000); }, style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--ink)', 'var(--cream)'));
+    row.appendChild(btn(['Bağlantıyı kaldır'], { onclick: () => { try { localStorage.removeItem('sevkiyat_drive_url'); } catch (e) {} render(); }, style: { fontSize: '12px', padding: '8px 10px' } }, 'none', 'var(--inkSoft)'));
+    box.appendChild(row);
+  } else {
+    box.appendChild(h('div', { style: { fontSize: '12px', color: 'var(--ink)', lineHeight: '1.6', marginBottom: '8px' } }, [
+      h('div', {}, 'Tek seferlik kurulum (2 dakika), sonra her şey otomatik:'),
+      h('div', {}, '1) "Kodu kopyala"ya bas.'),
+      h('div', {}, '2) "Google Script\'i aç"a bas → Yeni proje → içindekileri silip kodu yapıştır → 💾 Kaydet.'),
+      h('div', {}, '3) Dağıt → Yeni dağıtım → tür: Web uygulaması → Erişim: "Herkes" → Dağıt → izin ver.'),
+      h('div', {}, '4) Çıkan "Web uygulaması URL"sini kopyalayıp aşağıya yapıştır → Bağla.'),
+    ]));
+    const row = h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' } });
+    row.appendChild(btn([ic('copy', 13), ' Kodu kopyala'], { onclick: async () => { try { await navigator.clipboard.writeText(DRIVE_SCRIPT); state.successMsg = 'Kod kopyalandı.'; } catch (e) { state.driveShowCode = true; } render(); setTimeout(() => { state.successMsg = ''; render(); }, 3000); }, style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)'));
+    row.appendChild(btn([' Google Script\'i aç'], { onclick: () => { window.open('https://script.google.com/home/projects/create', '_blank'); }, style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)'));
+    box.appendChild(row);
+    if (state.driveShowCode) box.appendChild(h('textarea', { readonly: true, style: { width: '100%', height: '120px', fontSize: '10.5px', fontFamily: 'monospace', marginBottom: '8px' } }, DRIVE_SCRIPT));
+    const inp = h('input', { placeholder: 'https://script.google.com/macros/s/…/exec', style: { width: '100%', padding: '9px 10px', border: '1.5px solid var(--line)', borderRadius: '8px', fontSize: '12.5px', marginBottom: '8px', background: 'var(--paper)', color: 'var(--ink)' } });
+    box.appendChild(inp);
+    box.appendChild(btn([ic('check', 13), ' Bağla ve ilk yedeği yükle'], { onclick: async () => {
+      const v = (inp.value || '').trim();
+      if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/.test(v)) { state.error = 'Geçerli bir Google Script web uygulaması adresi yapıştır (…/exec ile biter).'; render(); return; }
+      try { localStorage.setItem('sevkiyat_drive_url', v); } catch (e) {}
+      await createAutoBackup(todayISO(), true);
+      state.successMsg = 'Drive bağlandı, ilk yedek yüklendi.'; render(); setTimeout(() => { state.successMsg = ''; render(); }, 5000);
+    }, style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--ink)', 'var(--cream)'));
+  }
+  container.appendChild(box);
+}
 function buildAutoBackupBox(container) {
+  buildDriveBox(container);
   if (!state._abLoaded) { state._abLoaded = true; refreshAutoBackups(); }
   const on = autoBackupEnabled();
   const box = h('div', { style: { background: 'var(--cream)', border: '1.5px solid var(--line)', borderRadius: '10px', padding: '12px', marginBottom: '12px' } });
@@ -1253,7 +1333,7 @@ function buildAutoBackupBox(container) {
   ]));
   const tg = h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12.5px', color: 'var(--inkSoft)', marginBottom: '8px' } });
   tg.appendChild(h('input', { type: 'checkbox', checked: on, style: { width: '16px', height: '16px', cursor: 'pointer' }, onchange: (e) => { try { localStorage.setItem('sevkiyat_autobackup', e.target.checked ? '1' : '0'); } catch (err) {} if (e.target.checked) maybeDailyAutoBackup(); render(); } }));
-  tg.appendChild(h('span', {}, 'Uygulama günde bir kez kendiliğinden yedek alsın (son ' + AUTOBACKUP_KEEP + ' yedek ' + (supabaseClient ? 'bulutta' : 'cihazda') + ' tutulur)'));
+  tg.appendChild(h('span', {}, 'Her değişiklikten sonra kendiliğinden yedek alınsın (son ' + AUTOBACKUP_KEEP + ' günün yedeği ' + (supabaseClient ? 'bulutta' : 'cihazda') + ' tutulur)'));
   box.appendChild(tg);
   const row = h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' } });
   row.appendChild(btn([ic('check', 13), state.autoBackupBusy ? ' Alınıyor…' : ' Şimdi Otomatik Yedek Al'], {
@@ -1986,9 +2066,7 @@ async function saveShipment() {
     state.shipments.sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.createdAt - a.createdAt);
     state.editingId = null; state.form = emptyForm(); state.navStack = []; state.view = 'list';
     await refreshStorageInfo();
-    if (!wasEdit && !state.suppressBackupPrompt && (!state.lastBackupAt || daysSince(state.lastBackupAt) >= 1)) {
-      state.showBackupReminder = true;
-    }
+    scheduleAutoBackup(); // hatırlatma yok: değişiklikten sonra kendiliğinden yedeklenir
   } catch (e) { state.error = 'Kayıt cihaza yazılamadı (' + (e && e.message ? e.message : 'bilinmeyen hata') + ').'; }
   state.saving = false; render();
 }
@@ -2803,6 +2881,86 @@ function buildPager(totalCount, page, perPage, onPageChange, onPerPageChange) {
   wrap.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--inkSoft)' } }, totalCount + ' kayıttan gösteriliyor'));
   return wrap;
 }
+/* ---- Sevkiyat kartını resim olarak paylaş (muhasebeye WhatsApp'tan) ---- */
+function loadImgEl(src) { return new Promise((res) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = src; }); }
+async function shipmentImageBlob(s) {
+  const W = 1080, P = 64, c = document.createElement('canvas'), x = c.getContext('2d');
+  const rows = [];
+  rows.push(['Tarih', formatDateTR(s.date)]);
+  if (s.plate) rows.push(['Plaka / Araç', s.plate]);
+  if (s.driver) rows.push(['Şoför', s.driver + (s.driverPhone ? ' · ' + s.driverPhone : '')]);
+  rows.push(['Miktar', s.tonnage ? (s.tonnage + ' ' + unitLabel(s.tonnageUnit)) : 'Girilmedi']);
+  if (hasUnitPrice(s)) {
+    const amount = costAmount(s);
+    rows.push(['Birim Fiyat', formatMoney(parseFloat(s.unitPrice)) + ' / ' + unitLabel(s.tonnageUnit)]);
+    if (amount !== null) {
+      rows.push(['Tutar (KDV hariç)', formatMoney(amount)]);
+      rows.push(['KDV (%' + getVatRate() + ')', formatMoney(withVat(amount) - amount)]);
+      rows.push(['TOPLAM (KDV dahil)', formatMoney(withVat(amount)), true]);
+    }
+  }
+  rows.push(['Fatura', s.invoiced ? 'Kesildi ✓' : 'Kesilmedi']);
+  const paintH = s.paintDetails ? 110 : 0;
+  const H = 260 + 150 + paintH + rows.length * 74 + 140;
+  c.width = W; c.height = H;
+  x.fillStyle = '#ffffff'; x.fillRect(0, 0, W, H);
+  // üst bant
+  const g = x.createLinearGradient(0, 0, W, 0); g.addColorStop(0, '#1d4ed8'); g.addColorStop(1, '#0891b2');
+  x.fillStyle = g; x.fillRect(0, 0, W, 220);
+  const logo = await loadImgEl(LOGO_H);
+  if (logo) { const lh = 120, lw = lh * logo.width / logo.height; x.fillStyle = '#fff'; x.beginPath(); x.roundRect ? x.roundRect(P - 14, 50 - 14, Math.min(lw, 560) + 28, lh + 28, 22) : x.rect(P - 14, 36, Math.min(lw, 560) + 28, lh + 28); x.fill(); x.drawImage(logo, P, 50, Math.min(lw, 560), lh); }
+  else { x.fillStyle = '#fff'; x.font = '800 54px Inter, sans-serif'; x.fillText('Yıldız Kumlama & Boya', P, 130); }
+  x.textAlign = 'right'; x.fillStyle = '#fff'; x.font = '600 34px Inter, sans-serif'; x.fillText('SEVKİYAT', W - P, 100);
+  x.font = '800 54px "IBM Plex Mono", monospace'; x.fillText('#' + String(s.seq).padStart(4, '0'), W - P, 165); x.textAlign = 'left';
+  // firma
+  let y = 220 + 100;
+  x.fillStyle = '#0f172a'; x.font = '800 60px Inter, sans-serif';
+  let name = String(s.company || ''); while (x.measureText(name).width > W - 2 * P && name.length > 3) name = name.slice(0, -2) + '…';
+  x.fillText(name, P, y); y += 40;
+  if (s.paintDetails) {
+    y += 20; x.fillStyle = '#eff6ff'; x.strokeStyle = '#bfdbfe'; x.lineWidth = 3;
+    x.beginPath(); x.roundRect ? x.roundRect(P, y, W - 2 * P, 84, 20) : x.rect(P, y, W - 2 * P, 84); x.fill(); x.stroke();
+    x.fillStyle = '#1d4ed8'; x.font = '700 36px Inter, sans-serif';
+    let pd = '🎨  ' + s.paintDetails; while (x.measureText(pd).width > W - 2 * P - 48 && pd.length > 3) pd = pd.slice(0, -2) + '…';
+    x.fillText(pd, P + 24, y + 56); y += 84;
+  }
+  y += 30;
+  rows.forEach(([k, v, strong], i) => {
+    if (strong) { x.fillStyle = '#ecfdf5'; x.fillRect(P - 16, y - 4, W - 2 * P + 32, 70); }
+    else if (i % 2 === 0) { x.fillStyle = '#f8fafc'; x.fillRect(P - 16, y - 4, W - 2 * P + 32, 70); }
+    x.fillStyle = strong ? '#047857' : '#64748b'; x.font = (strong ? '800 ' : '600 ') + '34px Inter, sans-serif'; x.fillText(k, P, y + 44);
+    x.textAlign = 'right'; x.fillStyle = strong ? '#047857' : (k === 'Fatura' ? (s.invoiced ? '#047857' : '#c2410c') : '#0f172a');
+    x.font = (strong ? '800 40px ' : '700 36px ') + '"IBM Plex Mono", monospace'; x.fillText(String(v), W - P, y + 46); x.textAlign = 'left';
+    y += 74;
+  });
+  // alt bilgi
+  x.fillStyle = '#94a3b8'; x.font = '500 28px Inter, sans-serif';
+  x.fillText('Yıldız Kumlama & Boya · ' + new Date().toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }), P, H - 56);
+  return await new Promise((r) => c.toBlob(r, 'image/png'));
+}
+async function shareShipmentImage(s) {
+  try {
+    const blob = await shipmentImageBlob(s);
+    const fname = 'sevkiyat-' + String(s.seq).padStart(4, '0') + '-' + String(s.company || '').replace(/[^\wçğıöşüÇĞİÖŞÜ]+/g, '-').slice(0, 30) + '.png';
+    const file = new File([blob], fname, { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: s.company, text: s.company + ' · #' + String(s.seq).padStart(4, '0') }); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    // paylaşım desteklenmiyorsa: resmi göster (basılı tutup paylaş/kaydet) + indirmeyi dene
+    state.shareImage = await blobToDataUrl(blob); state.shareImageName = fname; render();
+  } catch (e) { state.error = 'Resim oluşturulamadı: ' + (e && e.message ? e.message : String(e)); render(); }
+}
+function renderShareImageModal() {
+  const overlay = h('div', { onclick: () => { state.shareImage = null; render(); }, style: { position: 'fixed', inset: '0', background: 'rgba(15,23,42,.75)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '16px', zIndex: '70', gap: '12px' } });
+  overlay.appendChild(h('img', { src: state.shareImage, onclick: (e) => e.stopPropagation(), style: { maxWidth: '100%', maxHeight: '75vh', borderRadius: '14px', boxShadow: '0 20px 50px rgba(0,0,0,.4)' } }));
+  overlay.appendChild(h('div', { style: { color: '#fff', fontSize: '13px', textAlign: 'center' } }, 'Resme basılı tutup "Paylaş" veya "Kaydet" seçebilirsin.'));
+  const row = h('div', { style: { display: 'flex', gap: '10px' } });
+  row.appendChild(btn([ic('filedown', 14), ' İndir'], { onclick: (e) => { e.stopPropagation(); const a = document.createElement('a'); a.href = state.shareImage; a.download = state.shareImageName || 'sevkiyat.png'; document.body.appendChild(a); a.click(); a.remove(); } }, '#fff', '#0f172a'));
+  row.appendChild(btn(['Kapat'], { onclick: () => { state.shareImage = null; render(); } }, 'rgba(255,255,255,.15)', '#fff'));
+  overlay.appendChild(row);
+  return overlay;
+}
 function buildResultsList(filtered) {
   if (state.loading) return h('div', { style: { textAlign: 'center', padding: '40px', color: 'var(--inkSoft)' } }, 'Yükleniyor…');
   if (filtered.length === 0) return h('div', { style: { textAlign: 'center', padding: '48px 20px', color: 'var(--inkSoft)', border: '1.5px dashed var(--line)', borderRadius: '6px', fontSize: '14px' } }, state.shipments.length === 0 ? 'Henüz sevkiyat kaydı yok. "Yeni" ile ilk kaydı oluşturun.' : 'Aramanızla eşleşen kayıt bulunamadı.');
@@ -2869,6 +3027,11 @@ function buildResultsList(filtered) {
       s.invoiced ? 'Fatura Kesildi' : 'Fatura Kesilmedi',
     ]);
     badgeRow.appendChild(invoicedBadge);
+    badgeRow.appendChild(h('button', {
+      title: 'Resim olarak paylaş (WhatsApp vb.)',
+      onclick: (e) => { e.stopPropagation(); shareShipmentImage(s); },
+      style: { marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '6px', border: 'none', borderRadius: '999px', padding: '6px 12px', fontSize: '12.5px', fontWeight: '700', cursor: 'pointer', color: '#fff', background: 'linear-gradient(135deg,#22c55e,#16a34a)', boxShadow: '0 4px 12px rgba(22,163,74,.3)' },
+    }, [ic('share', 14, '#fff'), 'Paylaş']));
     card.appendChild(badgeRow);
     wrap.appendChild(card);
   });
@@ -4792,6 +4955,7 @@ function render() {
   if (state.pendingDelete) app.appendChild(renderDeleteModal());
   if (state.pendingInvoice) app.appendChild(renderInvoiceModal());
   if (state.pendingBackupPrompt) app.appendChild(renderBackupPromptModal());
+  if (state.shareImage) app.appendChild(renderShareImageModal());
   if (state.pendingExitConfirm) app.appendChild(renderExitConfirmModal());
   if (state.showPasteRestore) app.appendChild(renderPasteRestoreModal());
   if (state.pendingCostEdit) app.appendChild(renderCostEditModal());
@@ -4840,7 +5004,7 @@ function renderBottomNav() {
   bar.appendChild(tab('Görevler', 'check', 'tasks', t.ready.length + t.missing.length));
   bar.appendChild(h('button', { className: 'fab', title: 'Yeni sevkiyat', onclick: newShipment }, [ic('plus', 28)]));
   bar.appendChild(tab('Maliyet', 'sheet', 'cost'));
-  bar.appendChild(h('button', { className: moreActive || state.navMenuOpen ? 'on' : '', onclick: () => { state.navMenuOpen = !state.navMenuOpen; render(); } }, [ic('menu', 21), 'Daha Fazla', (!state.lastBackupAt || daysSince(state.lastBackupAt) >= 7) ? h('span', { className: 'bdg' }, '!') : (state.trash.length && !moreActive ? h('span', { className: 'bdg', style: { background: 'var(--inkSoft)' } }, String(state.trash.length)) : null)]));
+  bar.appendChild(h('button', { className: moreActive || state.navMenuOpen ? 'on' : '', onclick: () => { state.navMenuOpen = !state.navMenuOpen; render(); } }, [ic('menu', 21), 'Daha Fazla', false ? null : (state.trash.length && !moreActive ? h('span', { className: 'bdg', style: { background: 'var(--inkSoft)' } }, String(state.trash.length)) : null)]));
   return bar;
 }
 function renderNavMenu() {
@@ -4856,7 +5020,7 @@ function renderNavMenu() {
   NAV_ITEMS.filter((it) => ['prices', 'quotes', 'summary', 'paintcalc', 'trash'].indexOf(it.view) >= 0).forEach((it) => {
     grid.appendChild(tile(it.label, it.icon, () => gotoTab(it.view), state.view === it.view, it.badge ? it.badge() : 0));
   });
-  grid.appendChild(tile('Yedekleme', 'drive', () => { state.navMenuOpen = false; state.uiExpanded.backup = true; render(); }, false, (!state.lastBackupAt || daysSince(state.lastBackupAt) >= 7) ? '!' : 0));
+  grid.appendChild(tile('Yedekleme', 'drive', () => { state.navMenuOpen = false; state.uiExpanded.backup = true; render(); }, false, 0));
   grid.appendChild(tile(state.darkMode ? 'Açık Mod' : 'Karanlık Mod', 'moon', () => { state.darkMode = !state.darkMode; try { localStorage.setItem('sevkiyat_dark_mode', state.darkMode ? '1' : '0'); } catch (e) {} state.navMenuOpen = false; render(); }, false));
   if (state.pinEnabled) grid.appendChild(tile('Kilitle', 'lock', () => { state.navMenuOpen = false; lockApp(); }, false));
   sheet.appendChild(grid);
