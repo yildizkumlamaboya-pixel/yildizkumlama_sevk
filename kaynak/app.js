@@ -3296,9 +3296,9 @@ function renderFormView() {
   container.appendChild(field([ic('calendar', 13), ' Sevk Tarihi'], inputEl({ type: 'date', value: f.date, onchange: (e) => (f.date = e.target.value) })));
   // Önceki kayıtlardan otomatik tamamlama: firma + plaka önerisi; bilinen plakada şoför bilgileri boşsa dolar.
   const companyInp = inputEl({ value: f.company, style: { fontFamily: "'Inter',sans-serif" }, oninput: (e) => (f.company = e.target.value.toLocaleUpperCase('tr-TR')) });
-  companyInp.setAttribute('list', 'dl-company'); companyInp.setAttribute('autocomplete', 'off');
+  companyInp.setAttribute('autocomplete', 'off');
   const plateInp = inputEl({ value: f.plate, });
-  plateInp.setAttribute('list', 'dl-plate'); plateInp.setAttribute('autocomplete', 'off');
+  plateInp.setAttribute('autocomplete', 'off');
   const driverInp = inputEl({ value: f.driver, style: { fontFamily: "'Inter',sans-serif" }, oninput: (e) => (f.driver = e.target.value.toLocaleUpperCase('tr-TR')) });
   const phoneInp = inputEl({ type: 'tel', value: f.driverPhone, oninput: (e) => (f.driverPhone = e.target.value.toLocaleUpperCase('tr-TR')) });
   const tcInp = inputEl({ type: 'text', inputMode: 'numeric', maxLength: 11, value: f.driverTC, oninput: (e) => (f.driverTC = e.target.value.replace(/[^0-9]/g, '')) });
@@ -3314,12 +3314,34 @@ function renderFormView() {
   }
   plateInp.addEventListener('input', (e) => { f.plate = e.target.value.toLocaleUpperCase('tr-TR'); fillFromPlate(); });
   plateInp.addEventListener('change', fillFromPlate);
-  const dlCompany = h('datalist', { id: 'dl-company' }, Array.from(new Set(state.shipments.map((x) => x.company).filter(Boolean))).sort().map((c) => h('option', { value: c })));
-  const seenPlates = {}; const dlPlate = h('datalist', { id: 'dl-plate' });
-  state.shipments.forEach((x) => { if (x.plate && !seenPlates[x.plate]) { seenPlates[x.plate] = 1; dlPlate.appendChild(h('option', { value: x.plate, label: [x.plate, x.driver, x.company].filter(Boolean).join(' · ') })); } });
-  container.appendChild(dlCompany); container.appendChild(dlPlate);
-  container.appendChild(field([ic('building', 13), ' Firma Adı'], companyInp));
-  container.appendChild(field('Araç Plakası', plateInp));
+  const companyList = Array.from(new Set(state.shipments.map((x) => x.company).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'tr'));
+  const seenPlates = {}; const plateList = [];
+  state.shipments.forEach((x) => { const k = trNormalize(x.plate).replace(/\s+/g, ''); if (k && !seenPlates[k]) { seenPlates[k] = 1; plateList.push({ value: x.plate, sub: [x.driver, x.company].filter(Boolean).join(' · ') }); } });
+  const suggestBox = (inp, items, onPick) => {
+    const dd = h('div', { style: { display: 'none', position: 'absolute', left: '0', right: '0', top: 'calc(100% + 4px)', zIndex: '30', background: '#fff', color: '#111827', border: '1.5px solid var(--accent)', borderRadius: '12px', boxShadow: '0 10px 28px rgba(0,0,0,.28)', maxHeight: '240px', overflowY: 'auto' } });
+    const refresh = () => {
+      const q = trNormalize(inp.value).replace(/\s+/g, '');
+      dd.innerHTML = '';
+      const m = q ? items.filter((it) => { const v = trNormalize(it.value).replace(/\s+/g, ''); return v && v !== q && v.indexOf(q) >= 0; }).slice(0, 7) : [];
+      if (!m.length || document.activeElement !== inp) { dd.style.display = 'none'; return; }
+      m.forEach((it) => {
+        const row = h('div', { style: { padding: '11px 14px', borderBottom: '1px solid #E5E7EB', cursor: 'pointer', lineHeight: '1.3' } }, [
+          h('div', { style: { fontWeight: '700', fontSize: '15px', color: '#111827' } }, it.value),
+          it.sub ? h('div', { style: { fontSize: '12px', color: '#4B5563', marginTop: '2px' } }, it.sub) : null,
+        ].filter(Boolean));
+        row.addEventListener('pointerdown', (e) => { e.preventDefault(); inp.value = it.value; onPick(it); dd.style.display = 'none'; });
+        dd.appendChild(row);
+      });
+      dd.style.display = 'block';
+    };
+    inp.addEventListener('input', refresh);
+    inp.addEventListener('blur', () => setTimeout(() => { dd.style.display = 'none'; }, 150));
+    return h('div', { style: { position: 'relative' } }, [inp, dd]);
+  };
+  const companyBox = suggestBox(companyInp, companyList.map((c) => ({ value: c })), (it) => { f.company = it.value; });
+  const plateBox = suggestBox(plateInp, plateList, (it) => { f.plate = it.value.toLocaleUpperCase('tr-TR'); fillFromPlate(); });
+  container.appendChild(field([ic('building', 13), ' Firma Adı'], companyBox));
+  container.appendChild(field('Araç Plakası', plateBox));
   container.appendChild(field([ic('user', 13), ' Şoför Adı'], driverInp));
   container.appendChild(field([ic('phone', 13), ' Şoför Telefonu'], phoneInp));
   container.appendChild(field([ic('user', 13), ' Şoför TC (opsiyonel)'], tcInp));
