@@ -3131,41 +3131,60 @@ async function shipmentImageBlob(s) {
     }
   }
   rows.push(['Fatura', s.invoiced ? 'Kesildi ✓' : 'Kesilmedi']);
-  const paintH = s.paintDetails ? 110 : 0;
-  const H = 260 + 150 + paintH + rows.length * 74 + 140;
+  // boya detayı: tamamı görünsün diye satırlara bölünür
+  const wrapText = (text, font, maxW) => {
+    const m = document.createElement('canvas').getContext('2d'); m.font = font;
+    const out = []; let line = '';
+    String(text).replace(/\s*\n\s*/g, ' / ').split(/\s+/).forEach((w) => {
+      let t = line ? line + ' ' + w : w;
+      if (m.measureText(t).width <= maxW) { line = t; return; }
+      if (line) out.push(line);
+      while (m.measureText(w).width > maxW && w.length > 1) { let k = w.length - 1; while (k > 1 && m.measureText(w.slice(0, k)).width > maxW) k--; out.push(w.slice(0, k)); w = w.slice(k); }
+      line = w;
+    });
+    if (line) out.push(line); return out;
+  };
+  const PF = '700 36px Inter, sans-serif';
+  const pLines = s.paintDetails ? wrapText(s.paintDetails, PF, W - 2 * P - 60) : [];
+  const paintH = pLines.length ? 40 + 36 + pLines.length * 50 + 24 : 0;
+  const NAMEH = 150;
+  const H = 220 + 20 + NAMEH + paintH + 30 + rows.length * 74 + 140;
   c.width = W; c.height = H;
   x.fillStyle = '#ffffff'; x.fillRect(0, 0, W, H);
-  // üst bant
-  const g = x.createLinearGradient(0, 0, W, 0); g.addColorStop(0, '#1d4ed8'); g.addColorStop(1, '#0891b2');
-  x.fillStyle = g; x.fillRect(0, 0, W, 220);
+  // üst bant: logo ile uyumlu siyah + sarı
+  x.fillStyle = '#111111'; x.fillRect(0, 0, W, 220);
+  x.fillStyle = '#facc15'; x.fillRect(0, 220, W, 14);
   const logo = await loadImgEl(LOGO_H);
-  if (logo) { const lh = 120, lw = lh * logo.width / logo.height; x.fillStyle = '#fff'; x.beginPath(); x.roundRect ? x.roundRect(P - 14, 50 - 14, Math.min(lw, 560) + 28, lh + 28, 22) : x.rect(P - 14, 36, Math.min(lw, 560) + 28, lh + 28); x.fill(); x.drawImage(logo, P, 50, Math.min(lw, 560), lh); }
-  else { x.fillStyle = '#fff'; x.font = '800 54px Inter, sans-serif'; x.fillText('Yıldız Kumlama & Boya', P, 130); }
-  x.textAlign = 'right'; x.fillStyle = '#fff'; x.font = '600 34px Inter, sans-serif'; x.fillText('SEVKİYAT', W - P, 100);
-  x.font = '800 54px "IBM Plex Mono", monospace'; x.fillText('#' + String(s.seq).padStart(4, '0'), W - P, 165); x.textAlign = 'left';
+  if (logo) { const lh = 120, lw = Math.min(lh * logo.width / logo.height, 560); x.fillStyle = '#fff'; x.beginPath(); x.roundRect ? x.roundRect(P - 14, 36, lw + 28, lh + 28, 22) : x.rect(P - 14, 36, lw + 28, lh + 28); x.fill(); x.drawImage(logo, P, 50, lw, lh); }
+  else { x.fillStyle = '#facc15'; x.font = '800 54px Inter, sans-serif'; x.fillText('Yıldız Kumlama & Boya', P, 130); }
+  x.textAlign = 'right'; x.fillStyle = '#facc15'; x.font = '600 34px Inter, sans-serif'; x.fillText('SEVKİYAT', W - P, 100);
+  x.fillStyle = '#fff'; x.font = '800 54px "IBM Plex Mono", monospace'; x.fillText('#' + String(s.seq).padStart(4, '0'), W - P, 165); x.textAlign = 'left';
   // firma
-  let y = 220 + 100;
-  x.fillStyle = '#0f172a'; x.font = '800 60px Inter, sans-serif';
+  let y = 234 + 100;
+  x.fillStyle = '#111111'; x.font = '800 60px Inter, sans-serif';
   let name = String(s.company || ''); while (x.measureText(name).width > W - 2 * P && name.length > 3) name = name.slice(0, -2) + '…';
   x.fillText(name, P, y); y += 40;
-  if (s.paintDetails) {
-    y += 20; x.fillStyle = '#eff6ff'; x.strokeStyle = '#bfdbfe'; x.lineWidth = 3;
-    x.beginPath(); x.roundRect ? x.roundRect(P, y, W - 2 * P, 84, 20) : x.rect(P, y, W - 2 * P, 84); x.fill(); x.stroke();
-    x.fillStyle = '#1d4ed8'; x.font = '700 36px Inter, sans-serif';
-    let pd = '🎨  ' + s.paintDetails; while (x.measureText(pd).width > W - 2 * P - 48 && pd.length > 3) pd = pd.slice(0, -2) + '…';
-    x.fillText(pd, P + 24, y + 56); y += 84;
+  if (pLines.length) {
+    y += 20; const bh = 36 + pLines.length * 50 + 24 - 8;
+    x.fillStyle = '#fffbeb'; x.strokeStyle = '#facc15'; x.lineWidth = 4;
+    x.beginPath(); x.roundRect ? x.roundRect(P, y, W - 2 * P, bh, 20) : x.rect(P, y, W - 2 * P, bh); x.fill(); x.stroke();
+    x.fillStyle = '#a16207'; x.font = '800 26px Inter, sans-serif'; x.fillText('🎨  BOYA DETAYI', P + 30, y + 44);
+    x.fillStyle = '#111111'; x.font = PF;
+    pLines.forEach((ln, i) => x.fillText(ln, P + 30, y + 44 + 52 + i * 50 - 6));
+    y += bh;
   }
   y += 30;
   rows.forEach(([k, v, strong], i) => {
-    if (strong) { x.fillStyle = '#ecfdf5'; x.fillRect(P - 16, y - 4, W - 2 * P + 32, 70); }
-    else if (i % 2 === 0) { x.fillStyle = '#f8fafc'; x.fillRect(P - 16, y - 4, W - 2 * P + 32, 70); }
-    x.fillStyle = strong ? '#047857' : '#64748b'; x.font = (strong ? '800 ' : '600 ') + '34px Inter, sans-serif'; x.fillText(k, P, y + 44);
-    x.textAlign = 'right'; x.fillStyle = strong ? '#047857' : (k === 'Fatura' ? (s.invoiced ? '#047857' : '#c2410c') : '#0f172a');
+    if (strong) { x.fillStyle = '#facc15'; x.fillRect(P - 16, y - 4, W - 2 * P + 32, 70); }
+    else if (i % 2 === 0) { x.fillStyle = '#f5f5f4'; x.fillRect(P - 16, y - 4, W - 2 * P + 32, 70); }
+    x.fillStyle = strong ? '#111111' : '#57534e'; x.font = (strong ? '800 ' : '600 ') + '34px Inter, sans-serif'; x.fillText(k, P, y + 44);
+    x.textAlign = 'right'; x.fillStyle = strong ? '#111111' : (k === 'Fatura' ? (s.invoiced ? '#047857' : '#c2410c') : '#111111');
     x.font = (strong ? '800 40px ' : '700 36px ') + '"IBM Plex Mono", monospace'; x.fillText(String(v), W - P, y + 46); x.textAlign = 'left';
     y += 74;
   });
+  x.fillStyle = '#facc15'; x.fillRect(0, H - 16, W, 16);
   // alt bilgi
-  x.fillStyle = '#94a3b8'; x.font = '500 28px Inter, sans-serif';
+  x.fillStyle = '#78716c'; x.font = '500 28px Inter, sans-serif';
   x.fillText('Yıldız Kumlama & Boya · ' + new Date().toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }), P, H - 56);
   return await new Promise((r) => c.toBlob(r, 'image/png'));
 }
