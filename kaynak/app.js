@@ -3758,7 +3758,7 @@ function netAmount(s) {
 function getVatRate() { return 20; }
 function vatAmount(v) { return v * getVatRate() / 100; }
 function withVat(v) { return v * (1 + getVatRate() / 100); }
-function setVatRate(r) { state.vatRate = r; try { localStorage.setItem('sevkiyat_vat_rate', String(r)); } catch (e) {} }
+function setVatRate(r) { try { const o = getVatRate(); if (String(o) !== String(r)) { const arr = logRead(); arr.push({ t: Date.now(), k: 'kdv', a: 'düzenle', id: 'kdv', co: 'KDV oranı', seq: 0, d: 'KDV oranı: %' + o + ' → %' + r }); logWrite(arr); } } catch (e) {} state.vatRate = r; try { localStorage.setItem('sevkiyat_vat_rate', String(r)); } catch (e) {} }
 function formatMoney(v) { return v.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺'; }
 
 /* ============================== quotes ============================== */
@@ -3950,7 +3950,6 @@ function renderQuotesView() {
     modal.appendChild(box);
     container.appendChild(modal);
   }
-  container.appendChild(buildHistoryPanel('quote'));
 
   return container;
 }
@@ -4234,7 +4233,6 @@ function renderCostView() {
   const resultsWrap = h('div', { id: 'cost-results-wrap' });
   resultsWrap.appendChild(buildCostResults());
   container.appendChild(resultsWrap);
-  container.appendChild(buildHistoryPanel('cost'));
 
   return container;
 }
@@ -4933,7 +4931,6 @@ function renderPriceReportView() {
   container.appendChild(searchRow);
   container.appendChild(h('div', { style: { fontSize: '11.5px', color: 'var(--inkSoft)', marginBottom: '10px' } }, 'Fiyatlar KDV hariçtir; KDV dahil karşılığı (%' + getVatRate() + ') yanında gösterilir.'));
   container.appendChild(h('div', { id: 'price-wrap' }, [buildPriceReportList()]));
-  container.appendChild(buildHistoryPanel('cost'));
   return container;
 }
 function filteredPriceReport() {
@@ -5330,8 +5327,8 @@ const LOG_ICONS = { 'ekle': '➕ Eklendi', 'düzenle': '✏️ Düzenlendi', 'si
 function histCard(e) {
   const card = h('div', { className: 'card', style: { cursor: 'default', marginBottom: '10px' } });
   card.appendChild(h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' } }, [
-    h('div', { style: { fontWeight: '700', fontSize: '13.5px' } }, (e.k === 'q' ? '📝 Teklif · ' : '') + (LOG_ICONS[e.a] || e.a) + ' · ' + (e.co || '')),
-    e.k === 'q' ? null : h('div', { style: { fontFamily: "'IBM Plex Mono',monospace", fontSize: '12px', color: 'var(--steel)', whiteSpace: 'nowrap' } }, '#' + String(e.seq || 0).padStart(4, '0')),
+    h('div', { style: { fontWeight: '700', fontSize: '13.5px' } }, (e.k === 'q' ? '📝 Teklif · ' : (e.k === 'kdv' ? '🧾 Maliyet · ' : ((e.ks || []).some((k) => LOG_COST_KEYS.indexOf(k) >= 0 && k !== 'invoiced') ? '💰 Maliyet · ' : ''))) + (LOG_ICONS[e.a] || e.a) + ' · ' + (e.co || '')),
+    (e.k === 'q' || e.k === 'kdv') ? null : h('div', { style: { fontFamily: "'IBM Plex Mono',monospace", fontSize: '12px', color: 'var(--steel)', whiteSpace: 'nowrap' } }, '#' + String(e.seq || 0).padStart(4, '0')),
   ].filter(Boolean)));
   card.appendChild(h('div', { style: { fontSize: '11.5px', color: 'var(--inkSoft)', marginBottom: e.d ? '6px' : '0' } }, new Date(e.t).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })));
   if (e.d) card.appendChild(h('div', { style: { fontSize: '12.5px', lineHeight: '1.5', wordBreak: 'break-word' } }, e.d));
