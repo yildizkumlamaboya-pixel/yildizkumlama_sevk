@@ -1630,7 +1630,7 @@ function assistantOpLabel(o) {
   const f = o.alanlar || {};
   const parts = Object.keys(f).map((k) => k + ': ' + f[k]);
   const nos = Array.isArray(o.no) ? o.no.map((n) => '#' + n).join(', ') : (o.no ? '#' + o.no : '');
-  if (o.tip === 'sil') return 'SİL (çöp kutusuna) → ' + nos;
+  if (o.tip === 'sil') return 'SİL → ' + nos;
   if (o.tip === 'ekle') return 'EKLE → ' + parts.join(', ');
   return 'GÜNCELLE ' + nos + ' → ' + parts.join(', ');
 }
@@ -2277,12 +2277,12 @@ async function confirmDelete() {
     if (supabaseClient) {
       const ok = await cloudDeleteShipment(s.id);
       if (ok) unmarkDeleted(s.id);
-      else state.error = 'Kayıt çöp kutusuna taşındı, ancak bulutta işaretlenemedi — bir sonraki senkronda tekrar denenecek.';
+      else state.error = 'Kayıt silindi, ancak bulutta işaretlenemedi — bir sonraki senkronda tekrar denenecek.';
     }
     state.shipments = state.shipments.filter((x) => x.id !== s.id);
     state.trash.unshift(rec);
     state.navStack = []; state.view = 'list'; state.selectedId = null;
-    if (!state.error) { state.successMsg = 'Kayıt çöp kutusuna taşındı (' + TRASH_DAYS + ' gün içinde geri alınabilir).'; setTimeout(() => { state.successMsg = ''; render(); }, 6000); }
+    if (!state.error) { state.successMsg = 'Kayıt silindi (' + TRASH_DAYS + ' gün içinde Geçmiş ekranından geri alınabilir).'; setTimeout(() => { state.successMsg = ''; render(); }, 6000); }
     await refreshStorageInfo();
   } catch (e) {
     state.error = 'Silme işlemi başarısız oldu.';
@@ -5228,8 +5228,8 @@ function logRecordChange(rec) {
   const prevDeleted = state.trash.some((x) => x.id === rec.id);
   const e = { t: Date.now(), id: rec.id, seq: rec.seq, co: rec.company || '' };
   if (!had) { e.a = 'ekle'; e.d = [rec.plate, rec.tonnage ? rec.tonnage + ' ' + unitLabel(rec.tonnageUnit) : ''].filter(Boolean).join(' · '); }
-  else if (inTrash && !prevDeleted) { e.a = 'sil'; e.d = 'Çöp kutusuna taşındı'; }
-  else if (!inTrash && prevDeleted) { e.a = 'geri al'; e.d = 'Çöp kutusundan geri alındı'; }
+  else if (inTrash && !prevDeleted) { e.a = 'sil'; e.d = 'Kayıt silindi'; }
+  else if (!inTrash && prevDeleted) { e.a = 'geri al'; e.d = 'Silinen kayıt geri alındı'; }
   else {
     const o = old || logTracked(had), ch = {}, parts = [];
     Object.keys(Object.assign({}, o, now)).forEach((k) => { if (JSON.stringify(o[k]) !== JSON.stringify(now[k])) { ch[k] = o[k] === undefined ? '' : o[k]; parts.push((LOG_LABELS[k] || k) + ': ' + logFmt(o[k]) + ' → ' + logFmt(now[k])); } });
@@ -5343,7 +5343,6 @@ const NAV_ITEMS = [
   { view: 'prices', label: 'Fiyat Raporu', icon: 'sheet' },
   { view: 'quotes', label: 'Teklifler', icon: 'edit' },
   { view: 'paintcalc', label: 'Boya Hesap', icon: 'palette' },
-  { view: 'trash', label: 'Çöp Kutusu', icon: 'trash', badge: () => state.trash.length },
   { view: 'history', label: 'Geçmiş', icon: 'rotate' },
 ];
 const BOTTOM_VIEWS = ['list', 'tasks', 'cost'];
@@ -5433,7 +5432,7 @@ function renderBottomNav() {
   bar.appendChild(tab('Görevler', 'check', 'tasks', t.ready.length + t.missing.length));
   bar.appendChild(h('button', { className: 'fab', title: 'Yeni sevkiyat', onclick: newShipment }, [ic('plus', 28)]));
   bar.appendChild(tab('Maliyet', 'sheet', 'cost'));
-  bar.appendChild(h('button', { className: moreActive || state.navMenuOpen ? 'on' : '', onclick: () => { state.navMenuOpen = !state.navMenuOpen; render(); } }, [ic('menu', 21), 'Daha Fazla', false ? null : (state.trash.length && !moreActive ? h('span', { className: 'bdg', style: { background: 'var(--inkSoft)' } }, String(state.trash.length)) : null)]));
+  bar.appendChild(h('button', { className: moreActive || state.navMenuOpen ? 'on' : '', onclick: () => { state.navMenuOpen = !state.navMenuOpen; render(); } }, [ic('menu', 21), 'Daha Fazla',null]));
   return bar;
 }
 function renderNavMenu() {
@@ -5446,7 +5445,7 @@ function renderNavMenu() {
   const tile = (label, iconName, onclick, on, badge) => h('div', { className: 'tile' + (on ? ' on' : ''), onclick }, [ic(iconName, 24), label, badge ? h('span', { className: 'bdg' }, String(badge)) : null]);
   grid.appendChild(tile('Asistan', 'sparkle', () => openAssistant(), false));
   grid.appendChild(tile('WhatsApp', 'whatsapp', () => openWhatsApp(), false));
-  NAV_ITEMS.filter((it) => ['prices', 'quotes', 'summary', 'paintcalc', 'history', 'trash'].indexOf(it.view) >= 0).forEach((it) => {
+  NAV_ITEMS.filter((it) => ['prices', 'quotes', 'summary', 'paintcalc', 'history'].indexOf(it.view) >= 0).forEach((it) => {
     grid.appendChild(tile(it.label, it.icon, () => gotoTab(it.view), state.view === it.view, it.badge ? it.badge() : 0));
   });
   if (window.SevkNative && window.SevkNative.bubbleSet) grid.appendChild(tile('Kısayollar', 'plus', () => { state.navMenuOpen = false; state.shortcutsOpen = true; render(); }, false));
