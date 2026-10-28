@@ -1455,6 +1455,7 @@ window.onDrivePicked = function (ok) {
   });
 };
 async function driveUpload(blob) {
+  return false; // Drive yedeği kaldırıldı
   if (nativeDriveLinked()) {
     if (_driveBusy) { _driveAgain = blob; return false; }
     _driveBusy = true;
@@ -1552,7 +1553,6 @@ function buildDriveBox(container) {
 }
 function buildAutoBackupBox(container) {
   buildMediaBox(container);
-  buildDriveBox(container);
   if (!state._abLoaded) { state._abLoaded = true; refreshAutoBackups(); }
   const on = autoBackupEnabled();
   const box = h('div', { style: { background: 'var(--cream)', border: '1.5px solid var(--line)', borderRadius: '10px', padding: '12px', marginBottom: '12px' } });
