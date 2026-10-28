@@ -302,6 +302,7 @@ window.sevkFlushBackup = function () { if (_abTimer) { clearTimeout(_abTimer); r
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') window.sevkFlushBackup(); });
 async function dbPut(record) {
   setTimeout(scheduleAutoBackup, 0);
+  try { logRecordChange(record); } catch (e) {}
   if (record && recHasLocalMedia(record) && mediaOn()) ensureMedia(record);
   return dbPutRaw(record);
 }
@@ -2125,6 +2126,7 @@ function applyRecords(list) {
   live.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0));
   state.shipments = reindexSearch(live);
   state.trash = trash.sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
+  try { logShadowReset(); } catch (e) {}
 }
 async function purgeExpiredTrash() {
   const limit = Date.now() - TRASH_DAYS * 86400000;
@@ -5224,6 +5226,7 @@ function render() {
   else if (state.view === 'tasks') app.appendChild(renderTasksView());
   else if (state.view === 'summary') app.appendChild(renderSummaryView());
   else if (state.view === 'trash') app.appendChild(renderTrashView());
+  else if (state.view === 'history') app.appendChild(renderHistoryView());
   else if (state.view === 'prices') app.appendChild(renderPriceReportView());
   if (state.pendingPurge) app.appendChild(renderPurgeModal());
   if (state.pendingRestore) app.appendChild(renderRestoreModal());
@@ -5241,6 +5244,78 @@ function render() {
   if (showNav) app.appendChild(renderBottomNav());
   if (state.navMenuOpen) app.appendChild(renderNavMenu());
 }
+/* ============================== işlem geçmişi + eski haline döndürme ============================== */
+const LOG_KEY = 'sevkiyat_islem_gecmisi', LOG_MAX = 300;
+const LOG_LABELS = { company: 'Firma', date: 'Tarih', plate: 'Plaka', driver: 'Şoför', driverPhone: 'Şoför tel', driverTC: 'Şoför TC', paintDetails: 'Boya detayı', tonnage: 'Miktar', tonnageUnit: 'Birim', unitPrice: 'Birim fiyat', invoiced: 'Fatura' };
+const LOG_SKIP = { updatedAt: 1, createdAt: 1, _searchIdx: 1, photos: 1, signature: 1, media: 1, deletedAt: 1, id: 1, seq: 1 };
+const _logShadow = new Map();
+let _logNote = '';
+function logTracked(r) { const o = {}; Object.keys(r || {}).forEach((k) => { if (!LOG_SKIP[k] && typeof r[k] !== 'function') o[k] = r[k]; }); return o; }
+function logShadowReset() { _logShadow.clear(); state.shipments.concat(state.trash).forEach((r) => _logShadow.set(r.id, logTracked(r))); }
+function logRead() { try { return JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch (e) { return []; } }
+function logWrite(a) { try { localStorage.setItem(LOG_KEY, JSON.stringify(a.slice(-LOG_MAX))); } catch (e) {} }
+function logFmt(v) { if (v === true) return 'Kesildi'; if (v === false || v === undefined || v === null || v === '') return '—'; return String(v); }
+function logRecordChange(rec) {
+  if (!rec || !rec.id) return;
+  const now = logTracked(rec), old = _logShadow.get(rec.id);
+  const inTrash = !!rec.deletedAt;
+  const had = old || state.shipments.concat(state.trash).find((x) => x.id === rec.id);
+  const prevDeleted = state.trash.some((x) => x.id === rec.id);
+  const e = { t: Date.now(), id: rec.id, seq: rec.seq, co: rec.company || '' };
+  if (!had) { e.a = 'ekle'; e.d = [rec.plate, rec.tonnage ? rec.tonnage + ' ' + unitLabel(rec.tonnageUnit) : ''].filter(Boolean).join(' · '); }
+  else if (inTrash && !prevDeleted) { e.a = 'sil'; e.d = 'Çöp kutusuna taşındı'; }
+  else if (!inTrash && prevDeleted) { e.a = 'geri al'; e.d = 'Çöp kutusundan geri alındı'; }
+  else {
+    const o = old || logTracked(had), ch = {}, parts = [];
+    Object.keys(Object.assign({}, o, now)).forEach((k) => { if (JSON.stringify(o[k]) !== JSON.stringify(now[k])) { ch[k] = o[k] === undefined ? '' : o[k]; parts.push((LOG_LABELS[k] || k) + ': ' + logFmt(o[k]) + ' → ' + logFmt(now[k])); } });
+    if (!parts.length) { _logShadow.set(rec.id, now); return; }
+    e.a = _logNote || 'düzenle'; e.d = parts.join('; '); e.ch = ch;
+  }
+  _logShadow.set(rec.id, now);
+  const arr = logRead(); arr.push(e); logWrite(arr);
+}
+async function revertLogEntry(e) {
+  const cur = state.shipments.find((x) => x.id === e.id);
+  if (!cur || !e.ch) { state.error = 'Bu kayıt artık listede yok.'; render(); return; }
+  const rec = Object.assign({}, cur, e.ch, { updatedAt: Date.now() }); delete rec._searchIdx;
+  try {
+    _logNote = 'eski haline döndürüldü';
+    await dbPut(rec);
+    if (supabaseClient) cloudPushShipment(rec).catch(() => {});
+    rec._searchIdx = computeSearchIndex(rec);
+    const i = state.shipments.findIndex((x) => x.id === e.id); if (i >= 0) state.shipments[i] = rec;
+    state.successMsg = 'Kayıt önceki haline döndürüldü.'; setTimeout(() => { state.successMsg = ''; render(); }, 4000);
+  } catch (err) { state.error = 'Geri alınamadı.'; } finally { _logNote = ''; }
+  render();
+}
+function renderHistoryView() {
+  const container = h('div', { style: { padding: '18px 16px' } });
+  container.appendChild(h('h2', { style: { margin: '0 0 8px', fontSize: '18px', fontWeight: '600' } }, 'Geçmiş ve Önceki Sürüm'));
+  container.appendChild(h('div', { style: { fontSize: '12.5px', color: 'var(--inkSoft)', marginBottom: '12px', lineHeight: '1.5' } }, 'Yapılan her ekleme, düzenleme ve silme burada görünür. Düzenlemeyi "Eski haline döndür" ile, silineni "Geri al" ile geri getirebilirsin. Tüm programı eski bir güne döndürmek için aşağıdaki günlük yedekleri kullan.'));
+  if (state.successMsg) container.appendChild(h('div', { style: { background: 'var(--signed-bg)', color: 'var(--signed)', padding: '10px 12px', borderRadius: '10px', fontSize: '13px', marginBottom: '12px', fontWeight: '600' } }, state.successMsg));
+  const tabs = h('div', { style: { display: 'flex', gap: '8px', marginBottom: '12px' } });
+  [['log', 'İşlem Geçmişi'], ['ver', 'Önceki Sürümler']].forEach(([k, l]) => tabs.appendChild(h('button', { onclick: () => { state.histTab = k; render(); }, style: { flex: '1', padding: '9px', borderRadius: '10px', fontWeight: '700', fontSize: '13px', border: '1.5px solid ' + ((state.histTab || 'log') === k ? 'var(--accent)' : 'var(--line)'), background: (state.histTab || 'log') === k ? 'var(--accent-soft-bg)' : 'var(--cream)', color: 'var(--ink)', cursor: 'pointer' } }, l)));
+  container.appendChild(tabs);
+  if ((state.histTab || 'log') === 'ver') { buildAutoBackupBox(container); return container; }
+  const arr = logRead().slice().reverse();
+  if (!arr.length) { container.appendChild(h('div', { style: { textAlign: 'center', padding: '40px 20px', color: 'var(--inkSoft)', border: '1.5px dashed var(--line)', borderRadius: '12px' } }, 'Henüz işlem kaydı yok. Bundan sonraki işlemler burada listelenir.')); return container; }
+  const icons = { 'ekle': '➕ Eklendi', 'düzenle': '✏️ Düzenlendi', 'sil': '🗑️ Silindi', 'geri al': '♻️ Geri alındı', 'eski haline döndürüldü': '↩️ Eski haline döndürüldü' };
+  const lim = state.histLimit || 30;
+  arr.slice(0, lim).forEach((e) => {
+    const card = h('div', { className: 'card', style: { cursor: 'default', marginBottom: '10px' } });
+    card.appendChild(h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' } }, [
+      h('div', { style: { fontWeight: '700', fontSize: '13.5px' } }, (icons[e.a] || e.a) + ' · ' + (e.co || '')),
+      h('div', { style: { fontFamily: "'IBM Plex Mono',monospace", fontSize: '12px', color: 'var(--steel)', whiteSpace: 'nowrap' } }, '#' + String(e.seq || 0).padStart(4, '0')),
+    ]));
+    card.appendChild(h('div', { style: { fontSize: '11.5px', color: 'var(--inkSoft)', marginBottom: e.d ? '6px' : '0' } }, new Date(e.t).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })));
+    if (e.d) card.appendChild(h('div', { style: { fontSize: '12.5px', lineHeight: '1.5', wordBreak: 'break-word' } }, e.d));
+    if (e.a === 'düzenle' && e.ch && state.shipments.some((x) => x.id === e.id)) card.appendChild(btn([ic('rotate', 13), ' Eski haline döndür'], { onclick: () => revertLogEntry(e), style: { marginTop: '8px', fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)'));
+    if (e.a === 'sil') { const tr = state.trash.find((x) => x.id === e.id); if (tr) card.appendChild(btn([ic('rotate', 13), ' Geri al'], { onclick: () => restoreFromTrash(tr), style: { marginTop: '8px', fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)')); }
+    container.appendChild(card);
+  });
+  if (arr.length > lim) container.appendChild(btn(['Daha eski kayıtları göster'], { onclick: () => { state.histLimit = lim + 30; render(); }, style: { width: '100%', justifyContent: 'center', padding: '11px' } }, 'var(--paper2)', 'var(--ink)'));
+  return container;
+}
 const NAV_ITEMS = [
   { view: 'list', label: 'Sevkiyat', icon: 'truck' },
   { view: 'cost', label: 'Maliyet', icon: 'sheet' },
@@ -5250,6 +5325,7 @@ const NAV_ITEMS = [
   { view: 'quotes', label: 'Teklifler', icon: 'edit' },
   { view: 'paintcalc', label: 'Boya Hesap', icon: 'palette' },
   { view: 'trash', label: 'Çöp Kutusu', icon: 'trash', badge: () => state.trash.length },
+  { view: 'history', label: 'Geçmiş', icon: 'rotate' },
 ];
 const BOTTOM_VIEWS = ['list', 'tasks', 'cost'];
 function gotoTab(view) {
@@ -5351,7 +5427,7 @@ function renderNavMenu() {
   const tile = (label, iconName, onclick, on, badge) => h('div', { className: 'tile' + (on ? ' on' : ''), onclick }, [ic(iconName, 24), label, badge ? h('span', { className: 'bdg' }, String(badge)) : null]);
   grid.appendChild(tile('Asistan', 'sparkle', () => openAssistant(), false));
   grid.appendChild(tile('WhatsApp', 'whatsapp', () => openWhatsApp(), false));
-  NAV_ITEMS.filter((it) => ['prices', 'quotes', 'summary', 'paintcalc', 'trash'].indexOf(it.view) >= 0).forEach((it) => {
+  NAV_ITEMS.filter((it) => ['prices', 'quotes', 'summary', 'paintcalc', 'history', 'trash'].indexOf(it.view) >= 0).forEach((it) => {
     grid.appendChild(tile(it.label, it.icon, () => gotoTab(it.view), state.view === it.view, it.badge ? it.badge() : 0));
   });
   if (window.SevkNative && window.SevkNative.bubbleSet) grid.appendChild(tile('Kısayollar', 'plus', () => { state.navMenuOpen = false; state.shortcutsOpen = true; render(); }, false));
