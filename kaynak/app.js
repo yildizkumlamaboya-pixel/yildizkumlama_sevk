@@ -1533,8 +1533,8 @@ function buildAutoBackupBox(container) {
   }, 'var(--ink)', 'var(--cream)'));
   box.appendChild(row);
   if (state.autoBackupError) box.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--stamp)', marginBottom: '6px' } }, state.autoBackupError));
-  const all = state.autoBackups || [];
-  const list = all.filter((r) => r.day !== 'geri-yukleme-oncesi').slice(0, AUTOBACKUP_KEEP).concat(all.filter((r) => r.day === 'geri-yukleme-oncesi'));
+  const all = (state.autoBackups || []).slice().sort((x, y) => (y.at || 0) - (x.at || 0));
+  const list = all.filter((r) => r.day !== 'geri-yukleme-oncesi').slice(0, AUTOBACKUP_KEEP).concat(all.filter((r) => r.day === 'geri-yukleme-oncesi')).sort((x, y) => (y.at || 0) - (x.at || 0)); // en yeni üstte
   if (!list.length) {
     box.appendChild(h('div', { style: { fontSize: '11.5px', color: 'var(--inkSoft)' } }, 'Henüz otomatik yedek yok. Bugünkü yedek uygulama açıkken kendiliğinden alınır.'));
   } else {
