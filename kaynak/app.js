@@ -1,5 +1,5 @@
 const STAR_IMG = './star.png';
-const LOGO_H = './logo-h.jpg';
+const LOGO_H = './logo-h.png';
 /* ============================== helpers ============================== */
 function h(tag, attrs, children) {
   attrs = attrs || {}; children = children || [];
@@ -2027,9 +2027,9 @@ function renderAssistantModal() {
   const overlay = h('div', { style: { position: 'fixed', inset: '0', background: 'rgba(17,24,39,.55)', zIndex: '70', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }, onclick: () => { assistantStopSpeak(); state.assistantOpen = false; state.assistantNewHint = false; render(); } });
   const box = h('div', { onclick: (e) => e.stopPropagation(), style: { background: 'var(--paper)', width: '100%', maxWidth: '560px', borderRadius: '22px 22px 0 0', padding: '14px 14px calc(14px + env(safe-area-inset-bottom))', boxShadow: '0 -12px 40px rgba(0,0,0,.3)', display: 'flex', flexDirection: 'column', maxHeight: '86vh' } });
   box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' } }, [
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: '7px', fontWeight: '800', fontSize: '15px' } }, [ic('sparkle', 17, 'var(--accent)'), ' Asistan']),
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: '7px', fontWeight: '800', fontSize: '15px' } }, [ic('sparkle', 17, 'var(--accent-text)'), ' Asistan']),
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } }, [
-      h('span', { onclick: assistantToggleSpeak, title: 'Sesli cevap', style: { cursor: 'pointer', color: state.assistantSpeak ? 'var(--accent)' : 'var(--inkSoft)', padding: '4px', display: 'inline-flex' } }, [ic(state.assistantSpeak ? 'speaker' : 'speakeroff', 22)]),
+      h('span', { onclick: assistantToggleSpeak, title: 'Sesli cevap', style: { cursor: 'pointer', color: state.assistantSpeak ? 'var(--accent-text)' : 'var(--inkSoft)', padding: '4px', display: 'inline-flex' } }, [ic(state.assistantSpeak ? 'speaker' : 'speakeroff', 22)]),
       h('span', { onclick: () => { assistantStopSpeak(); state.assistantOpen = false; state.assistantNewHint = false; render(); }, style: { cursor: 'pointer', color: 'var(--inkSoft)', fontWeight: '700', padding: '4px 6px', fontSize: '16px' } }, '✕'),
     ]),
   ]));
@@ -2616,13 +2616,13 @@ function renderHeader() {
       boxShadow: 'var(--header-shadow)',
     },
   }, [
-    h('div', { style: { position: 'absolute', right: '-30px', top: '-40px', width: '170px', height: '170px', borderRadius: '50%', background: 'rgba(138,180,255,0.10)' } }),
+    h('div', { style: { position: 'absolute', right: '-30px', top: '-40px', width: '170px', height: '170px', borderRadius: '50%', background: 'rgba(250,204,21,0.10)' } }),
     h('div', { style: { position: 'absolute', right: '40px', bottom: '-60px', width: '110px', height: '110px', borderRadius: '50%', background: 'rgba(255,255,255,0.08)' } }),
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' } }, [
-      h('div', { style: { width: '46px', height: '46px', borderRadius: '14px', background: '#8AB4FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto', boxShadow: '0 4px 12px rgba(0,0,0,.35)' } }, [h('img', { src: STAR_IMG, alt: 'Yıldız', style: { width: '30px', height: 'auto', display: 'block' } })]),
-      h('div', { style: { flex: '1' } }, [
-        h('h1', { style: { margin: '0', fontFamily: "'Inter',sans-serif", fontWeight: '800', fontSize: '17px', color: '#8AB4FF', letterSpacing: '0.01em', textTransform: 'uppercase' } }, 'Yıldız Kumlama & Boya'),
-        h('div', { style: { fontFamily: "'Inter',sans-serif", fontSize: '12.5px', color: 'rgba(255,255,255,0.85)', marginTop: '3px', fontWeight: '500' } }, 'Sevkiyat Programı · ' + state.shipments.length + ' kayıt'),
+      h('img', { src: LOGO_H, alt: 'Yıldız Kumlama & Boya', style: { height: '52px', width: 'auto', display: 'block', flex: '0 0 auto', filter: 'drop-shadow(0 2px 6px rgba(0,0,0,.45))' } }),
+      h('div', { style: { flex: '1', minWidth: '0', textAlign: 'right', paddingRight: '4px' } }, [
+        h('div', { style: { fontFamily: "'Inter',sans-serif", fontWeight: '800', fontSize: '13px', color: '#FACC15', letterSpacing: '0.04em', textTransform: 'uppercase' } }, 'Sevkiyat Programı'),
+        h('div', { style: { fontFamily: "'Inter',sans-serif", fontSize: '12px', color: 'rgba(255,255,255,0.85)', marginTop: '2px', fontWeight: '500' } }, state.shipments.length + ' kayıt'),
       ]),
       h('button', { title: 'Geçmiş', 'aria-label': 'Geçmiş', onclick: () => { state.histTab = 'log'; gotoTab('history'); }, style: { width: '44px', height: '44px', borderRadius: '14px', border: 'none', background: '#facc15', color: '#111111', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,0,0,.35)' } }, [ic('rotate', 22)]),
     ]),
@@ -3381,7 +3381,7 @@ function renderFormView() {
   });
   rebuildPhotoGrid();
   photoField.appendChild(photoGrid); photoField.appendChild(photoFileInput);
-  if (window.SevkNative && window.SevkNative.mediaLinked && !mediaOn()) photoField.appendChild(h('div', { onclick: () => window.SevkNative.mediaPick(), style: { marginTop: '8px', fontSize: '12px', color: 'var(--accent)', fontWeight: '600', cursor: 'pointer' } }, '📁 Fotoğraf ve imzalar buluta değil telefona kaydedilsin — klasör seç'));
+  if (window.SevkNative && window.SevkNative.mediaLinked && !mediaOn()) photoField.appendChild(h('div', { onclick: () => window.SevkNative.mediaPick(), style: { marginTop: '8px', fontSize: '12px', color: 'var(--accent-text)', fontWeight: '600', cursor: 'pointer' } }, '📁 Fotoğraf ve imzalar buluta değil telefona kaydedilsin — klasör seç'));
   photoField.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--inkSoft)', marginTop: '6px' } }, 'En fazla 6 görsel — yazı okunabilir kalitede, tek versiyon olarak saklanır.'));
   container.appendChild(field([ic('camera', 13), ' Yükleme Görselleri'], photoField));
 
@@ -4523,7 +4523,7 @@ function buildTaskBanner() {
     onclick: () => openAssistant(),
     style: { display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--accent-soft-bg)', border: '1.5px solid var(--accent)', borderRadius: '14px', padding: '11px 14px', marginBottom: '12px', cursor: 'pointer' },
   }, [
-    h('span', { style: { color: 'var(--accent)', display: 'inline-flex' } }, [ic('sparkle', 22)]),
+    h('span', { style: { color: 'var(--accent-text)', display: 'inline-flex' } }, [ic('sparkle', 22)]),
     h('div', { style: { flex: '1', minWidth: '0' } }, [
       h('div', { style: { fontWeight: '800', fontSize: '14px', color: 'var(--ink)' } }, 'Asistan'),
       h('div', { style: { fontSize: '12px', color: 'var(--inkSoft)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, 'Sor, konuş, kayıt ekle veya düzenlet…'),
@@ -5142,10 +5142,10 @@ function pressPin(d) {
 function renderLockScreen() {
   const wrap = h('div', { style: { position: 'fixed', inset: '0', background: '#111113', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', zIndex: '100', color: '#fff' } });
   wrap.appendChild(h('div', { style: { background: '#fff', borderRadius: '16px', padding: '10px 14px', marginBottom: '14px', boxShadow: '0 0 0 3px #8AB4FF' } }, [h('img', { src: LOGO_H, alt: 'Yıldız Kumlama & Boya', style: { width: '260px', maxWidth: '78vw', height: 'auto', display: 'block' } })]));
-  wrap.appendChild(h('div', { style: { fontSize: '16px', fontWeight: '700', marginBottom: '4px', color: '#8AB4FF' } }, 'Sevkiyat Programı'));
+  wrap.appendChild(h('div', { style: { fontSize: '16px', fontWeight: '700', marginBottom: '4px', color: '#FACC15' } }, 'Sevkiyat Programı'));
   wrap.appendChild(h('div', { style: { fontSize: '13px', color: state.pinError ? '#F1AEB5' : 'rgba(255,255,255,.65)', marginBottom: '22px' } }, state.pinError ? 'Yanlış PIN, tekrar dene' : 'PIN kodunu gir'));
   const dots = h('div', { style: { display: 'flex', gap: '14px', marginBottom: '28px' } });
-  for (let i = 0; i < 4; i++) dots.appendChild(h('div', { style: { width: '14px', height: '14px', borderRadius: '50%', border: '2px solid ' + (state.pinError ? '#DC3545' : '#8AB4FF'), background: i < state.pinInput.length ? (state.pinError ? '#DC3545' : '#8AB4FF') : 'transparent' } }));
+  for (let i = 0; i < 4; i++) dots.appendChild(h('div', { style: { width: '14px', height: '14px', borderRadius: '50%', border: '2px solid ' + (state.pinError ? '#DC3545' : '#FACC15'), background: i < state.pinInput.length ? (state.pinError ? '#DC3545' : '#FACC15') : 'transparent' } }));
   wrap.appendChild(dots);
   const pad = h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 72px)', gap: '14px' } });
   const key = (label, fn) => h('button', { onclick: fn, style: { width: '72px', height: '72px', borderRadius: '50%', border: '1px solid rgba(255,255,255,.25)', background: label === '' ? 'transparent' : 'rgba(255,255,255,.08)', color: '#fff', fontSize: '26px', fontWeight: '500', cursor: 'pointer', visibility: label === '' ? 'hidden' : 'visible' } }, label);
@@ -5397,14 +5397,14 @@ function buildMediaBox(container) {
   const linked = mediaOn();
   const box = h('div', { style: { background: 'var(--cream)', border: '1.5px solid ' + (linked ? 'var(--signed-border)' : 'var(--accent)'), borderRadius: '10px', padding: '12px', marginBottom: '12px' } });
   box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontWeight: '700', fontSize: '13.5px' } }, [
-    ic('camera', 14, linked ? 'var(--signed)' : 'var(--accent)'), ' Fotoğraf ve İmzalar (telefonda)',
+    ic('camera', 14, linked ? 'var(--signed)' : 'var(--accent-text)'), ' Fotoğraf ve İmzalar (telefonda)',
     h('span', { style: { marginLeft: 'auto', fontSize: '11px', color: linked ? 'var(--signed)' : 'var(--inkSoft)', fontWeight: '600' } }, linked ? '● Klasör seçili' : '○ Seçilmedi'),
   ]));
   if (linked) {
     let nm = ''; try { nm = N.mediaName(); } catch (e) {}
     box.appendChild(h('div', { style: { fontSize: '12.5px', fontWeight: '600', marginBottom: '4px', wordBreak: 'break-all' } }, nm));
     box.appendChild(h('div', { style: { fontSize: '12px', color: 'var(--inkSoft)', lineHeight: '1.5', marginBottom: '8px' } }, 'Her sevkiyatın fotoğraf ve imzası bu klasörde kendi alt klasörüne kaydedilir. Buluta yalnızca yazılar gider.'));
-    if (state.mediaMig) box.appendChild(h('div', { style: { fontSize: '12.5px', color: 'var(--accent)', fontWeight: '600', marginBottom: '8px' } }, 'Taşınıyor… ' + state.mediaMig.done + ' / ' + state.mediaMig.total));
+    if (state.mediaMig) box.appendChild(h('div', { style: { fontSize: '12.5px', color: 'var(--accent-text)', fontWeight: '600', marginBottom: '8px' } }, 'Taşınıyor… ' + state.mediaMig.done + ' / ' + state.mediaMig.total));
     box.appendChild(btn([ic('camera', 13), ' Klasörü değiştir'], { onclick: () => N.mediaPick(), style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)'));
   } else {
     box.appendChild(h('div', { style: { fontSize: '12.5px', lineHeight: '1.6', marginBottom: '10px' } }, 'Fotoğraf ve imzalar buluta gidip yer kaplamasın: telefonda bir klasör seç (örn. "Sevkiyat Fotoğrafları" adında yeni klasör oluştur → "Bu klasörü kullan" → İzin ver). Eski kayıtların fotoğrafları da oraya taşınır, buluttan kaldırılır.'));

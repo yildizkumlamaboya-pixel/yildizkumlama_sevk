@@ -1,5 +1,5 @@
-const CACHE_NAME = 'sevkiyat-cache-v54';
-const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './star.png', './logo-h.jpg', './app1.bin', './app2.bin', './app3.bin', './app4.bin', './app5.bin', './app6.bin', './app7.bin', './app8.bin', './app9.bin', './app10.bin', './app11.bin', './app12.bin'];
+const CACHE_NAME = 'sevkiyat-cache-v55';
+const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './star.png', './logo-h.png', './app1.bin', './app2.bin', './app3.bin', './app4.bin', './app5.bin', './app6.bin', './app7.bin', './app8.bin', './app9.bin', './app10.bin', './app11.bin', './app12.bin'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
