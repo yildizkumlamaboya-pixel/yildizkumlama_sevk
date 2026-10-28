@@ -4562,16 +4562,7 @@ function buildTaskBanner() {
     ]),
     h('span', { onclick: (e) => { e.stopPropagation(); openAssistant(); setTimeout(assistantMicToggle, 60); }, style: { width: '38px', height: '38px', borderRadius: '50%', background: 'var(--accent)', color: 'var(--on-accent)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' } }, [ic('mic', 20)]),
   ]);
-  const wa = h('div', {
-    onclick: () => openWhatsApp(),
-    style: { display: 'flex', alignItems: 'center', gap: '10px', background: 'var(--cream)', border: '1.5px solid #16A34A', borderRadius: '14px', padding: '10px 14px', marginBottom: '12px', cursor: 'pointer' },
-  }, [
-    h('span', { style: { color: '#16A34A', display: 'inline-flex' } }, [ic('whatsapp', 22)]),
-    h('div', { style: { flex: '1', fontWeight: '800', fontSize: '14px' } }, 'WhatsApp\'tan sevkiyat ekle'),
-    h('span', { style: { color: 'var(--inkSoft)', fontSize: '18px' } }, '›'),
-  ]);
-  const wrap = h('div', {}); wrap.appendChild(bar); wrap.appendChild(wa);
-  return wrap;
+  return bar;
 }
 
 /* ---- Görevler view ---- */
