@@ -1450,12 +1450,12 @@ window.onDrivePicked = function (ok) {
   if (ok === false) return;
   try { localStorage.removeItem('sevkiyat_drive_err'); } catch (e) {}
   createAutoBackup(todayISO(), true).then(() => {
-    state.successMsg = 'Drive bağlandı, ilk yedek yüklendi. Bundan sonra her işlemde otomatik.'; render();
+    state.successMsg = 'Yedek klasörü seçildi, ilk yedek yazıldı. Bundan sonra her işlemde otomatik.'; render();
     setTimeout(() => { state.successMsg = ''; render(); }, 5000);
   });
 };
 async function driveUpload(blob) {
-  return false; // Drive yedeği kaldırıldı
+  if (!nativeDriveLinked()) return false; // yalnızca telefonda seçilen yedek klasörü
   if (nativeDriveLinked()) {
     if (_driveBusy) { _driveAgain = blob; return false; }
     _driveBusy = true;
@@ -1481,78 +1481,39 @@ async function driveUpload(blob) {
     return false;
   }
 }
-function buildNativeDriveBox(container) {
+function buildBackupFolderBox(container) {
   const linked = nativeDriveLinked(), last = Number(localStorage.getItem('sevkiyat_drive_last')) || 0, err = localStorage.getItem('sevkiyat_drive_err') || '';
   const box = h('div', { style: { background: 'var(--cream)', border: '1.5px solid ' + (linked ? 'var(--signed-border)' : 'var(--line)'), borderRadius: '10px', padding: '12px', marginBottom: '12px' } });
   box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontWeight: '700', fontSize: '13.5px' } }, [
-    ic('uploadcloud', 14, linked ? 'var(--signed)' : 'var(--inkSoft)'), ' Google Drive Yedeği',
+    ic('uploadcloud', 14, linked ? 'var(--signed)' : 'var(--inkSoft)'), ' Yedek Klasörü',
     h('span', { style: { marginLeft: 'auto', fontSize: '11px', color: linked ? 'var(--signed)' : 'var(--inkSoft)', fontWeight: '600' } }, linked ? '● Bağlı' : '○ Bağlı değil'),
   ]));
   if (linked) {
     let name = ''; try { name = NATIVE.driveName(); } catch (e) {}
     box.appendChild(h('div', { style: { fontSize: '12.5px', color: 'var(--ink)', fontWeight: '600', marginBottom: '4px', wordBreak: 'break-all' } }, name));
     box.appendChild(h('div', { style: { fontSize: '12px', color: 'var(--inkSoft)', lineHeight: '1.5', marginBottom: '8px' } },
-      'Her işlemden sonra yedek kendiliğinden bu dosyaya yazılır (Drive eski sürümleri de saklar). ' + (last ? 'Son yükleme: ' + new Date(last).toLocaleString('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Henüz yüklenmedi.')));
+      'Her işlemden sonra yedek kendiliğinden bu klasöre yazılır. ' + (last ? 'Son yedek: ' + new Date(last).toLocaleString('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Henüz yazılmadı.')));
     if (err) box.appendChild(h('div', { style: { fontSize: '11.5px', color: 'var(--stamp)', marginBottom: '6px' } }, 'Son deneme başarısız: ' + err));
     const row = h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } });
-    row.appendChild(btn([ic('uploadcloud', 13), ' Şimdi yükle'], { onclick: async () => { await createAutoBackup(todayISO(), true); state.successMsg = 'Yedek Drive\'a gönderildi.'; render(); setTimeout(() => { state.successMsg = ''; render(); }, 4000); }, style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--ink)', 'var(--cream)'));
-    row.appendChild(btn([ic('drive', 13), ' Klasörü değiştir'], { onclick: () => NATIVE.drivePick(), style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)'));
+    row.appendChild(btn([ic('uploadcloud', 13), ' Şimdi yedekle'], { onclick: async () => { await createAutoBackup(todayISO(), true); state.successMsg = 'Yedek klasöre yazıldı.'; render(); setTimeout(() => { state.successMsg = ''; render(); }, 4000); }, style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--ink)', 'var(--cream)'));
+    row.appendChild(btn([ic('drive', 13), ' Yedek klasörünü değiştir'], { onclick: () => NATIVE.drivePick(), style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)'));
     row.appendChild(btn(['Kaldır'], { onclick: () => { NATIVE.driveForget(); render(); }, style: { fontSize: '12px', padding: '8px 10px' } }, 'none', 'var(--inkSoft)'));
     box.appendChild(row);
   } else {
     box.appendChild(h('div', { style: { fontSize: '12.5px', color: 'var(--ink)', lineHeight: '1.6', marginBottom: '10px' } }, [
-      h('div', {}, 'Bir kez klasör seç, sonra her işlemden sonra yedek otomatik Drive\'a gider:'),
-      h('div', {}, '1) "Drive klasörü seç"e bas.'),
-      h('div', {}, '2) Açılan pencerede sol menüden Drive\'ı seç, yedek klasörünü aç.'),
+      h('div', {}, 'Bir kez klasör seç, sonra her işlemden sonra yedek otomatik bu klasöre yazılır:'),
+      h('div', {}, '1) "Yedek klasörü seç"e bas.'),
+      h('div', {}, '2) Açılan pencerede istediğin klasörü aç (Drive, Dosyalarım vb.).'),
       h('div', {}, '3) "Kaydet"e bas — bitti.'),
     ]));
-    box.appendChild(btn([ic('drive', 14), ' Drive klasörü seç'], { onclick: () => NATIVE.drivePick(), style: { fontSize: '13px', padding: '10px 14px' } }, 'var(--ink)', 'var(--cream)'));
-  }
-  container.appendChild(box);
-}
-function buildDriveBox(container) {
-  if (NATIVE) return buildNativeDriveBox(container);
-  const url = driveUrl(), last = Number(localStorage.getItem('sevkiyat_drive_last')) || 0, err = localStorage.getItem('sevkiyat_drive_err') || '';
-  const box = h('div', { style: { background: 'var(--cream)', border: '1.5px solid var(--line)', borderRadius: '10px', padding: '12px', marginBottom: '12px' } });
-  box.appendChild(h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontWeight: '700', fontSize: '13.5px' } }, [
-    ic('uploadcloud', 14, url ? 'var(--signed)' : 'var(--inkSoft)'), ' Google Drive Yedeği',
-    h('span', { style: { marginLeft: 'auto', fontSize: '11px', color: url ? 'var(--signed)' : 'var(--inkSoft)', fontWeight: '600' } }, url ? '● Bağlı' : '○ Bağlı değil'),
-  ]));
-  if (url) {
-    box.appendChild(h('div', { style: { fontSize: '12px', color: 'var(--inkSoft)', lineHeight: '1.5', marginBottom: '8px' } },
-      'Her otomatik yedek Drive\'daki "Sevkiyat Yedekleri" klasörüne de yüklenir (son 30 gün). ' + (last ? 'Son yükleme: ' + new Date(last).toLocaleString('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '')));
-    if (err) box.appendChild(h('div', { style: { fontSize: '11px', color: 'var(--stamp)', marginBottom: '6px' } }, 'Son deneme başarısız: ' + err));
-    const row = h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } });
-    row.appendChild(btn([ic('uploadcloud', 13), ' Şimdi Drive\'a Yükle'], { onclick: async () => { await createAutoBackup(todayISO(), true); state.successMsg = 'Drive\'a yüklendi.'; render(); setTimeout(() => { state.successMsg = ''; render(); }, 4000); }, style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--ink)', 'var(--cream)'));
-    row.appendChild(btn(['Bağlantıyı kaldır'], { onclick: () => { try { localStorage.removeItem('sevkiyat_drive_url'); } catch (e) {} render(); }, style: { fontSize: '12px', padding: '8px 10px' } }, 'none', 'var(--inkSoft)'));
-    box.appendChild(row);
-  } else {
-    box.appendChild(h('div', { style: { fontSize: '12px', color: 'var(--ink)', lineHeight: '1.6', marginBottom: '8px' } }, [
-      h('div', {}, 'Tek seferlik kurulum (2 dakika), sonra her şey otomatik:'),
-      h('div', {}, '1) "Kodu kopyala"ya bas.'),
-      h('div', {}, '2) "Google Script\'i aç"a bas → Yeni proje → içindekileri silip kodu yapıştır → 💾 Kaydet.'),
-      h('div', {}, '3) Dağıt → Yeni dağıtım → tür: Web uygulaması → Erişim: "Herkes" → Dağıt → izin ver.'),
-      h('div', {}, '4) Çıkan "Web uygulaması URL"sini kopyalayıp aşağıya yapıştır → Bağla.'),
-    ]));
-    const row = h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' } });
-    row.appendChild(btn([ic('copy', 13), ' Kodu kopyala'], { onclick: async () => { try { await navigator.clipboard.writeText(DRIVE_SCRIPT); state.successMsg = 'Kod kopyalandı.'; } catch (e) { state.driveShowCode = true; } render(); setTimeout(() => { state.successMsg = ''; render(); }, 3000); }, style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)'));
-    row.appendChild(btn([' Google Script\'i aç'], { onclick: () => { window.open('https://script.google.com/home/projects/create', '_blank'); }, style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)'));
-    box.appendChild(row);
-    if (state.driveShowCode) box.appendChild(h('textarea', { readonly: true, style: { width: '100%', height: '120px', fontSize: '10.5px', fontFamily: 'monospace', marginBottom: '8px' } }, DRIVE_SCRIPT));
-    const inp = h('input', { placeholder: 'https://script.google.com/macros/s/…/exec', style: { width: '100%', padding: '9px 10px', border: '1.5px solid var(--line)', borderRadius: '8px', fontSize: '12.5px', marginBottom: '8px', background: 'var(--paper)', color: 'var(--ink)' } });
-    box.appendChild(inp);
-    box.appendChild(btn([ic('check', 13), ' Bağla ve ilk yedeği yükle'], { onclick: async () => {
-      const v = (inp.value || '').trim();
-      if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec/.test(v)) { state.error = 'Geçerli bir Google Script web uygulaması adresi yapıştır (…/exec ile biter).'; render(); return; }
-      try { localStorage.setItem('sevkiyat_drive_url', v); } catch (e) {}
-      await createAutoBackup(todayISO(), true);
-      state.successMsg = 'Drive bağlandı, ilk yedek yüklendi.'; render(); setTimeout(() => { state.successMsg = ''; render(); }, 5000);
-    }, style: { fontSize: '12.5px', padding: '8px 12px' } }, 'var(--ink)', 'var(--cream)'));
+    box.appendChild(btn([ic('drive', 14), ' Yedek klasörü seç'], { onclick: () => NATIVE.drivePick(), style: { fontSize: '13px', padding: '10px 14px' } }, 'var(--ink)', 'var(--cream)'));
   }
   container.appendChild(box);
 }
 function buildAutoBackupBox(container) {
   buildMediaBox(container);
+  if (NATIVE) buildBackupFolderBox(container);
+  if (NATIVE) buildBackupFolderBox(container);
   if (!state._abLoaded) { state._abLoaded = true; refreshAutoBackups(); }
   const on = autoBackupEnabled();
   const box = h('div', { style: { background: 'var(--cream)', border: '1.5px solid var(--line)', borderRadius: '10px', padding: '12px', marginBottom: '12px' } });
@@ -1640,7 +1601,7 @@ function openAssistant() {
 }
 function assistantOpenTarget(o) {
   const nav = { ekran_liste: 'list', ekran_gorevler: 'tasks', ekran_maliyet: 'cost', ekran_ozet: 'summary', ekran_boya_hesap: 'paintcalc', ekran_fiyatlar: 'prices', ekran_teklifler: 'quotes', ekran_cop: 'trash' };
-  if (o.hedef === 'yedekleme') { state.assistantOpen = false; state.uiExpanded.backup = true; render(); return true; }
+  if (o.hedef === 'yedekleme') { state.assistantOpen = false; state.histTab = 'ver'; gotoTab('history'); return true; }
   if (nav[o.hedef]) { state.assistantOpen = false; gotoTab(nav[o.hedef]); return true; }
   if (o.hedef === 'yeni_sevkiyat') {
     const f = emptyForm();
@@ -5360,13 +5321,13 @@ function buildHistoryPanel(scope) {
 }
 function renderHistoryView() {
   const container = h('div', { style: { padding: '18px 16px' } });
-  container.appendChild(h('h2', { style: { margin: '0 0 8px', fontSize: '18px', fontWeight: '600' } }, 'Geçmiş ve Önceki Sürüm'));
-  container.appendChild(h('div', { style: { fontSize: '12.5px', color: 'var(--inkSoft)', marginBottom: '12px', lineHeight: '1.5' } }, 'Yapılan her ekleme, düzenleme ve silme burada görünür. Düzenlemeyi "Eski haline döndür" ile, silineni "Geri al" ile geri getirebilirsin. Tüm programı eski bir güne döndürmek için aşağıdaki günlük yedekleri kullan.'));
+  container.appendChild(h('h2', { style: { margin: '0 0 8px', fontSize: '18px', fontWeight: '600' } }, 'Geçmiş ve Yedekleme'));
+  container.appendChild(h('div', { style: { fontSize: '12.5px', color: 'var(--inkSoft)', marginBottom: '12px', lineHeight: '1.5' } }, 'Yapılan her ekleme, düzenleme ve silme burada görünür. Düzenlemeyi "Eski haline döndür" ile, silineni "Geri al" ile geri getirebilirsin. Yedek alma, yedek klasörü ve eski bir güne dönme için "Yedekleme" sekmesini kullan.'));
   if (state.successMsg) container.appendChild(h('div', { style: { background: 'var(--signed-bg)', color: 'var(--signed)', padding: '10px 12px', borderRadius: '10px', fontSize: '13px', marginBottom: '12px', fontWeight: '600' } }, state.successMsg));
   const tabs = h('div', { style: { display: 'flex', gap: '8px', marginBottom: '12px' } });
-  [['log', 'İşlem Geçmişi'], ['ver', 'Önceki Sürümler']].forEach(([k, l]) => tabs.appendChild(h('button', { onclick: () => { state.histTab = k; render(); }, style: { flex: '1', padding: '9px', borderRadius: '10px', fontWeight: '700', fontSize: '13px', border: '1.5px solid ' + ((state.histTab || 'log') === k ? 'var(--accent)' : 'var(--line)'), background: (state.histTab || 'log') === k ? 'var(--accent-soft-bg)' : 'var(--cream)', color: 'var(--ink)', cursor: 'pointer' } }, l)));
+  [['log', 'İşlem Geçmişi'], ['ver', 'Yedekleme']].forEach(([k, l]) => tabs.appendChild(h('button', { onclick: () => { state.histTab = k; render(); }, style: { flex: '1', padding: '9px', borderRadius: '10px', fontWeight: '700', fontSize: '13px', border: '1.5px solid ' + ((state.histTab || 'log') === k ? 'var(--accent)' : 'var(--line)'), background: (state.histTab || 'log') === k ? 'var(--accent-soft-bg)' : 'var(--cream)', color: 'var(--ink)', cursor: 'pointer' } }, l)));
   container.appendChild(tabs);
-  if ((state.histTab || 'log') === 'ver') { buildAutoBackupBox(container); return container; }
+  if ((state.histTab || 'log') === 'ver') { buildBackupPanelContent(container); return container; }
   const arr = logRead().slice().reverse();
   if (!arr.length) { container.appendChild(h('div', { style: { textAlign: 'center', padding: '40px 20px', color: 'var(--inkSoft)', border: '1.5px dashed var(--line)', borderRadius: '12px' } }, 'Henüz işlem kaydı yok. Bundan sonraki işlemler burada listelenir.')); return container; }
   const lim = state.histLimit || 30;
@@ -5489,7 +5450,6 @@ function renderNavMenu() {
     grid.appendChild(tile(it.label, it.icon, () => gotoTab(it.view), state.view === it.view, it.badge ? it.badge() : 0));
   });
   if (window.SevkNative && window.SevkNative.bubbleSet) grid.appendChild(tile('Kısayollar', 'plus', () => { state.navMenuOpen = false; state.shortcutsOpen = true; render(); }, false));
-  grid.appendChild(tile('Yedekleme', 'drive', () => { state.navMenuOpen = false; state.uiExpanded.backup = true; render(); }, false, 0));
   grid.appendChild(tile(state.darkMode ? 'Açık Mod' : 'Karanlık Mod', 'moon', () => { state.darkMode = !state.darkMode; try { localStorage.setItem('sevkiyat_dark_mode', state.darkMode ? '1' : '0'); } catch (e) {} state.navMenuOpen = false; render(); }, false));
   if (state.pinEnabled) grid.appendChild(tile('Kilitle', 'lock', () => { state.navMenuOpen = false; lockApp(); }, false));
   sheet.appendChild(grid);
