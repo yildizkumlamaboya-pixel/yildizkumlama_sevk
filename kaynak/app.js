@@ -3781,7 +3781,9 @@ async function saveQuote() {
   });
   record.updatedAt = Date.now();
   try {
+    const _oldQ = state.quotes.find((x) => x.id === record.id);
     await dbPutQuote(record);
+    try { logQuoteChange(record, _oldQ ? Object.assign({}, _oldQ) : null, false); } catch (e) {}
     if (supabaseClient) cloudPushQuote(record).catch(() => {});
     const idx = state.quotes.findIndex((x) => x.id === record.id);
     if (idx === -1) state.quotes.unshift(record); else state.quotes[idx] = record;
@@ -3798,7 +3800,9 @@ async function confirmDeleteQuote() {
   const id = state.pendingQuoteDelete;
   if (!id) return;
   try {
+    const _q = state.quotes.find((x) => x.id === id);
     await dbDeleteQuote(id);
+    if (_q) { try { logQuoteChange(_q, null, true); } catch (e) {} }
     markDeleted(id);
     if (supabaseClient) {
       const ok = await cloudDeleteQuote(id);
@@ -3946,6 +3950,7 @@ function renderQuotesView() {
     modal.appendChild(box);
     container.appendChild(modal);
   }
+  container.appendChild(buildHistoryPanel('quote'));
 
   return container;
 }
@@ -4229,6 +4234,7 @@ function renderCostView() {
   const resultsWrap = h('div', { id: 'cost-results-wrap' });
   resultsWrap.appendChild(buildCostResults());
   container.appendChild(resultsWrap);
+  container.appendChild(buildHistoryPanel('cost'));
 
   return container;
 }
@@ -4927,6 +4933,7 @@ function renderPriceReportView() {
   container.appendChild(searchRow);
   container.appendChild(h('div', { style: { fontSize: '11.5px', color: 'var(--inkSoft)', marginBottom: '10px' } }, 'Fiyatlar KDV hariçtir; KDV dahil karşılığı (%' + getVatRate() + ') yanında gösterilir.'));
   container.appendChild(h('div', { id: 'price-wrap' }, [buildPriceReportList()]));
+  container.appendChild(buildHistoryPanel('cost'));
   return container;
 }
 function filteredPriceReport() {
@@ -5246,7 +5253,7 @@ function render() {
 }
 /* ============================== işlem geçmişi + eski haline döndürme ============================== */
 const LOG_KEY = 'sevkiyat_islem_gecmisi', LOG_MAX = 300;
-const LOG_LABELS = { company: 'Firma', date: 'Tarih', plate: 'Plaka', driver: 'Şoför', driverPhone: 'Şoför tel', driverTC: 'Şoför TC', paintDetails: 'Boya detayı', tonnage: 'Miktar', tonnageUnit: 'Birim', unitPrice: 'Birim fiyat', invoiced: 'Fatura' };
+const LOG_LABELS = { company: 'Firma', date: 'Tarih', plate: 'Plaka', driver: 'Şoför', driverPhone: 'Şoför tel', driverTC: 'Şoför TC', paintDetails: 'Boya detayı', tonnage: 'Miktar', tonnageUnit: 'Birim', unitPrice: 'Birim fiyat', invoiced: 'Fatura', paintCost: 'Boya maliyeti', astarUsed: 'Astar', topcoatUsed: 'Son kat', thinnerUsed: 'Tiner', ralCode: 'RAL', work: 'İş', paintThickness: 'Kalınlık', price: 'Fiyat', status: 'Durum', notes: 'Not' };
 const LOG_SKIP = { updatedAt: 1, createdAt: 1, _searchIdx: 1, photos: 1, signature: 1, media: 1, deletedAt: 1, id: 1, seq: 1 };
 const _logShadow = new Map();
 let _logNote = '';
@@ -5269,12 +5276,43 @@ function logRecordChange(rec) {
     const o = old || logTracked(had), ch = {}, parts = [];
     Object.keys(Object.assign({}, o, now)).forEach((k) => { if (JSON.stringify(o[k]) !== JSON.stringify(now[k])) { ch[k] = o[k] === undefined ? '' : o[k]; parts.push((LOG_LABELS[k] || k) + ': ' + logFmt(o[k]) + ' → ' + logFmt(now[k])); } });
     if (!parts.length) { _logShadow.set(rec.id, now); return; }
-    e.a = _logNote || 'düzenle'; e.d = parts.join('; '); e.ch = ch;
+    e.a = _logNote || 'düzenle'; e.d = parts.join('; '); e.ch = ch; e.ks = Object.keys(ch);
   }
   _logShadow.set(rec.id, now);
   const arr = logRead(); arr.push(e); logWrite(arr);
 }
+const LOG_COST_KEYS = ['unitPrice', 'paintCost', 'astarUsed', 'topcoatUsed', 'thinnerUsed', 'ralCode', 'invoiced'];
+function logQuoteChange(rec, old, deleted) {
+  const e = { t: Date.now(), k: 'q', id: rec.id, co: rec.company || '', seq: 0 };
+  if (deleted) { e.a = 'sil'; e.d = 'Teklif silindi' + (rec.price ? ' · ' + rec.price : ''); e.snap = rec; }
+  else if (!old) { e.a = 'ekle'; e.d = [rec.work, rec.price ? 'Fiyat: ' + rec.price : ''].filter(Boolean).join(' · '); }
+  else {
+    const ch = {}, parts = [];
+    ['date', 'company', 'work', 'paintThickness', 'tonnage', 'tonnageUnit', 'price', 'status', 'notes'].forEach((k) => { if (JSON.stringify(old[k]) !== JSON.stringify(rec[k])) { ch[k] = old[k] === undefined ? '' : old[k]; parts.push((LOG_LABELS[k] || k) + ': ' + logFmt(old[k]) + ' → ' + logFmt(rec[k])); } });
+    if (!parts.length) return;
+    e.a = 'düzenle'; e.d = parts.join('; '); e.ch = ch; e.ks = Object.keys(ch);
+  }
+  const arr = logRead(); arr.push(e); logWrite(arr);
+}
 async function revertLogEntry(e) {
+  if (e.k === 'q') {
+    try {
+      if (e.a === 'sil') {
+        const rec = Object.assign({}, e.snap, { updatedAt: Date.now() });
+        await dbPutQuote(rec); if (supabaseClient) { unmarkDeleted(rec.id); cloudPushQuote(rec).catch(() => {}); }
+        state.quotes.unshift(rec); state.quotes.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0));
+        state.successMsg = 'Teklif geri alındı.';
+      } else {
+        const cur = state.quotes.find((x) => x.id === e.id); if (!cur) { state.error = 'Bu teklif artık yok.'; render(); return; }
+        const rec = Object.assign({}, cur, e.ch, { updatedAt: Date.now() });
+        await dbPutQuote(rec); if (supabaseClient) cloudPushQuote(rec).catch(() => {});
+        state.quotes[state.quotes.findIndex((x) => x.id === e.id)] = rec;
+        state.successMsg = 'Teklif önceki haline döndürüldü.';
+      }
+      setTimeout(() => { state.successMsg = ''; render(); }, 4000);
+    } catch (err) { state.error = 'Geri alınamadı.'; }
+    render(); return;
+  }
   const cur = state.shipments.find((x) => x.id === e.id);
   if (!cur || !e.ch) { state.error = 'Bu kayıt artık listede yok.'; render(); return; }
   const rec = Object.assign({}, cur, e.ch, { updatedAt: Date.now() }); delete rec._searchIdx;
@@ -5288,6 +5326,41 @@ async function revertLogEntry(e) {
   } catch (err) { state.error = 'Geri alınamadı.'; } finally { _logNote = ''; }
   render();
 }
+const LOG_ICONS = { 'ekle': '➕ Eklendi', 'düzenle': '✏️ Düzenlendi', 'sil': '🗑️ Silindi', 'geri al': '♻️ Geri alındı', 'eski haline döndürüldü': '↩️ Eski haline döndürüldü' };
+function histCard(e) {
+  const card = h('div', { className: 'card', style: { cursor: 'default', marginBottom: '10px' } });
+  card.appendChild(h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' } }, [
+    h('div', { style: { fontWeight: '700', fontSize: '13.5px' } }, (e.k === 'q' ? '📝 Teklif · ' : '') + (LOG_ICONS[e.a] || e.a) + ' · ' + (e.co || '')),
+    e.k === 'q' ? null : h('div', { style: { fontFamily: "'IBM Plex Mono',monospace", fontSize: '12px', color: 'var(--steel)', whiteSpace: 'nowrap' } }, '#' + String(e.seq || 0).padStart(4, '0')),
+  ].filter(Boolean)));
+  card.appendChild(h('div', { style: { fontSize: '11.5px', color: 'var(--inkSoft)', marginBottom: e.d ? '6px' : '0' } }, new Date(e.t).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })));
+  if (e.d) card.appendChild(h('div', { style: { fontSize: '12.5px', lineHeight: '1.5', wordBreak: 'break-word' } }, e.d));
+  const rb = (label, fn) => btn([ic('rotate', 13), ' ' + label], { onclick: fn, style: { marginTop: '8px', fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)');
+  if (e.k === 'q') {
+    if (e.a === 'düzenle' && e.ch && state.quotes.some((x) => x.id === e.id)) card.appendChild(rb('Eski haline döndür', () => revertLogEntry(e)));
+    if (e.a === 'sil' && e.snap && !state.quotes.some((x) => x.id === e.id)) card.appendChild(rb('Geri al', () => revertLogEntry(e)));
+  } else {
+    if (e.a === 'düzenle' && e.ch && state.shipments.some((x) => x.id === e.id)) card.appendChild(rb('Eski haline döndür', () => revertLogEntry(e)));
+    if (e.a === 'sil') { const tr = state.trash.find((x) => x.id === e.id); if (tr) card.appendChild(rb('Geri al', () => restoreFromTrash(tr))); }
+  }
+  return card;
+}
+/* Maliyet / Fiyat Raporu / Teklifler ekranlarının altındaki küçük "Geçmiş" alanı */
+function buildHistoryPanel(scope) {
+  const all = logRead().slice().reverse().filter((e) => scope === 'quote' ? e.k === 'q' : (e.k !== 'q' && e.a === 'düzenle' && (e.ks || []).some((k) => LOG_COST_KEYS.indexOf(k) >= 0)));
+  state.histOpen = state.histOpen || {};
+  const open = !!state.histOpen[scope];
+  const wrap = h('div', { style: { marginTop: '18px' } });
+  wrap.appendChild(h('button', { onclick: () => { state.histOpen[scope] = !open; render(); }, style: { display: 'flex', alignItems: 'center', gap: '8px', width: '100%', padding: '11px 14px', background: 'var(--cream)', border: '1.5px solid var(--line)', borderRadius: '12px', fontWeight: '700', fontSize: '13.5px', color: 'var(--ink)', cursor: 'pointer', textAlign: 'left' } }, [ic('rotate', 15), h('span', { style: { flex: '1' } }, (scope === 'quote' ? 'Teklif geçmişi' : 'Fiyat / maliyet geçmişi') + ' (' + all.length + ')'), h('span', {}, open ? '▲' : '▼')]));
+  if (open) {
+    const box = h('div', { style: { marginTop: '10px' } });
+    if (!all.length) box.appendChild(h('div', { style: { fontSize: '12.5px', color: 'var(--inkSoft)', padding: '10px 4px' } }, 'Henüz geçmiş yok. Bundan sonraki değişiklikler burada görünür.'));
+    all.slice(0, 20).forEach((e) => box.appendChild(histCard(e)));
+    if (all.length > 20) box.appendChild(btn(['Tüm geçmişi aç'], { onclick: () => { state.histTab = 'log'; gotoTab('history'); }, style: { width: '100%', justifyContent: 'center', padding: '10px' } }, 'var(--paper2)', 'var(--ink)'));
+    wrap.appendChild(box);
+  }
+  return wrap;
+}
 function renderHistoryView() {
   const container = h('div', { style: { padding: '18px 16px' } });
   container.appendChild(h('h2', { style: { margin: '0 0 8px', fontSize: '18px', fontWeight: '600' } }, 'Geçmiş ve Önceki Sürüm'));
@@ -5299,20 +5372,8 @@ function renderHistoryView() {
   if ((state.histTab || 'log') === 'ver') { buildAutoBackupBox(container); return container; }
   const arr = logRead().slice().reverse();
   if (!arr.length) { container.appendChild(h('div', { style: { textAlign: 'center', padding: '40px 20px', color: 'var(--inkSoft)', border: '1.5px dashed var(--line)', borderRadius: '12px' } }, 'Henüz işlem kaydı yok. Bundan sonraki işlemler burada listelenir.')); return container; }
-  const icons = { 'ekle': '➕ Eklendi', 'düzenle': '✏️ Düzenlendi', 'sil': '🗑️ Silindi', 'geri al': '♻️ Geri alındı', 'eski haline döndürüldü': '↩️ Eski haline döndürüldü' };
   const lim = state.histLimit || 30;
-  arr.slice(0, lim).forEach((e) => {
-    const card = h('div', { className: 'card', style: { cursor: 'default', marginBottom: '10px' } });
-    card.appendChild(h('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' } }, [
-      h('div', { style: { fontWeight: '700', fontSize: '13.5px' } }, (icons[e.a] || e.a) + ' · ' + (e.co || '')),
-      h('div', { style: { fontFamily: "'IBM Plex Mono',monospace", fontSize: '12px', color: 'var(--steel)', whiteSpace: 'nowrap' } }, '#' + String(e.seq || 0).padStart(4, '0')),
-    ]));
-    card.appendChild(h('div', { style: { fontSize: '11.5px', color: 'var(--inkSoft)', marginBottom: e.d ? '6px' : '0' } }, new Date(e.t).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })));
-    if (e.d) card.appendChild(h('div', { style: { fontSize: '12.5px', lineHeight: '1.5', wordBreak: 'break-word' } }, e.d));
-    if (e.a === 'düzenle' && e.ch && state.shipments.some((x) => x.id === e.id)) card.appendChild(btn([ic('rotate', 13), ' Eski haline döndür'], { onclick: () => revertLogEntry(e), style: { marginTop: '8px', fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)'));
-    if (e.a === 'sil') { const tr = state.trash.find((x) => x.id === e.id); if (tr) card.appendChild(btn([ic('rotate', 13), ' Geri al'], { onclick: () => restoreFromTrash(tr), style: { marginTop: '8px', fontSize: '12.5px', padding: '8px 12px' } }, 'var(--paper2)', 'var(--ink)')); }
-    container.appendChild(card);
-  });
+  arr.slice(0, lim).forEach((e) => container.appendChild(histCard(e)));
   if (arr.length > lim) container.appendChild(btn(['Daha eski kayıtları göster'], { onclick: () => { state.histLimit = lim + 30; render(); }, style: { width: '100%', justifyContent: 'center', padding: '11px' } }, 'var(--paper2)', 'var(--ink)'));
   return container;
 }
