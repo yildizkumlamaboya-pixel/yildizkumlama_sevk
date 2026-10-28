@@ -1143,7 +1143,7 @@ const QUOTE_STATUSES = {
 };
 const state = {
   view: 'list', shipments: [], loading: true,
-  darkMode: (() => { try { return localStorage.getItem('sevkiyat_dark_mode') === '1'; } catch (e) { return false; } })(),
+  darkMode: (() => { try { return window.matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) { return false; } })(),
   query: '', companyFilter: '', tonnageFilter: '', invoicedFilter: '', dateFrom: '', dateTo: '',
   selectedId: null, editingId: null, error: '', successMsg: '',
   saving: false, pdfBusy: false, bulkPdfBusy: false, restoreBusy: false, backupBusy: false, backupProgress: '', excelBackupBusy: false, pdfBackupBusy: false, pdfBackupPending: false,
@@ -5169,6 +5169,7 @@ document.addEventListener('visibilitychange', () => {
 
 
 /* ============================== main render ============================== */
+try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => { state.darkMode = e.matches; render(); }); } catch (e) {}
 function render() {
   document.documentElement.setAttribute('data-theme', state.darkMode ? 'dark' : 'light');
   const app = document.getElementById('app');
@@ -5449,8 +5450,6 @@ function renderNavMenu() {
     grid.appendChild(tile(it.label, it.icon, () => gotoTab(it.view), state.view === it.view, it.badge ? it.badge() : 0));
   });
   if (window.SevkNative && window.SevkNative.bubbleSet) grid.appendChild(tile('Kısayollar', 'plus', () => { state.navMenuOpen = false; state.shortcutsOpen = true; render(); }, false));
-  grid.appendChild(tile(state.darkMode ? 'Açık Mod' : 'Karanlık Mod', 'moon', () => { state.darkMode = !state.darkMode; try { localStorage.setItem('sevkiyat_dark_mode', state.darkMode ? '1' : '0'); } catch (e) {} state.navMenuOpen = false; render(); }, false));
-  if (state.pinEnabled) grid.appendChild(tile('Kilitle', 'lock', () => { state.navMenuOpen = false; lockApp(); }, false));
   sheet.appendChild(grid);
   overlay.appendChild(sheet);
   return overlay;
