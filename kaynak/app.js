@@ -2621,9 +2621,10 @@ function renderHeader() {
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' } }, [
       h('div', { style: { width: '46px', height: '46px', borderRadius: '14px', background: '#8AB4FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto', boxShadow: '0 4px 12px rgba(0,0,0,.35)' } }, [h('img', { src: STAR_IMG, alt: 'Yıldız', style: { width: '30px', height: 'auto', display: 'block' } })]),
       h('div', { style: { flex: '1' } }, [
-        h('h1', { style: { margin: '0', fontFamily: "'Inter',sans-serif", fontWeight: '800', fontSize: '19px', color: '#8AB4FF', letterSpacing: '0.01em', textTransform: 'uppercase' } }, 'Yıldız Kumlama & Boya'),
+        h('h1', { style: { margin: '0', fontFamily: "'Inter',sans-serif", fontWeight: '800', fontSize: '17px', color: '#8AB4FF', letterSpacing: '0.01em', textTransform: 'uppercase' } }, 'Yıldız Kumlama & Boya'),
         h('div', { style: { fontFamily: "'Inter',sans-serif", fontSize: '12.5px', color: 'rgba(255,255,255,0.85)', marginTop: '3px', fontWeight: '500' } }, 'Sevkiyat Programı · ' + state.shipments.length + ' kayıt'),
       ]),
+      h('button', { title: 'Geçmiş', 'aria-label': 'Geçmiş', onclick: () => { state.histTab = 'log'; gotoTab('history'); }, style: { width: '44px', height: '44px', borderRadius: '14px', border: 'none', background: '#facc15', color: '#111111', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,0,0,.35)' } }, [ic('rotate', 22)]),
     ]),
   ]);
 }
