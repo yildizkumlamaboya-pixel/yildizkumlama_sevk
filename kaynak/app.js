@@ -1734,6 +1734,8 @@ async function assistantTtsStream(t, my) {
 
 /* ============================== WhatsApp'tan sevkiyat ekle ============================== */
 function waNormCo(x) { return trNormalize(String(x || '')).replace(/[^A-ZÇĞİÖŞÜ0-9]/g, ''); }
+function waMin(t) { const m = /^(\d{1,2})[:.](\d{2})/.exec(String(t || '')); return m ? (+m[1]) * 60 + (+m[2]) : null; }
+function waTimeApart(a, b) { const x = waMin(a), y = waMin(b); return x != null && y != null && Math.abs(x - y) > 20; }
 function waDayDiff(a, b) { if (!a || !b) return 999; return Math.abs((new Date(a) - new Date(b)) / 86400000); }
 function waIsDup(it, others) {
   const co = waNormCo(it.firma), q = parseFloat(it.miktar), pl = waNormCo(it.plaka);
@@ -1742,6 +1744,7 @@ function waIsDup(it, others) {
     const coOk = co && sc && (sc === co || sc.indexOf(co) >= 0 || co.indexOf(sc) >= 0);
     if (!coOk) return false;
     const dd = waDayDiff(it.tarih, s.date);
+    if (dd === 0 && waTimeApart(it.saat, s.waTime)) return false; // aynı gün farklı saat = farklı sevkiyat
     const sq = parseFloat(s.tonnage);
     if (!isNaN(q) && !isNaN(sq) && Math.abs(q - sq) <= Math.max(1, q * 0.005) && dd <= 1) return true;
     if (pl && waNormCo(s.plate) === pl && dd <= 1) return true;
@@ -1750,6 +1753,7 @@ function waIsDup(it, others) {
   return state.shipments.some(same) || (others || []).some((o) => o !== it && waIsSameItem(it, o));
 }
 function waIsSameItem(a, b) {
+  if (waTimeApart(a.saat, b.saat)) return false;
   return waNormCo(a.firma) === waNormCo(b.firma) && (a.tarih || '') === (b.tarih || '') && parseFloat(a.miktar) === parseFloat(b.miktar) && waNormCo(a.plaka) === waNormCo(b.plaka);
 }
 function openWhatsApp() {
@@ -1799,7 +1803,7 @@ async function waSave() {
   for (const it of chosen) {
     try {
       const rec = Object.assign(emptyForm(), { id: uid(), seq: nextSeq(), createdAt: Date.now(), updatedAt: Date.now(), photos: [] });
-      rec.date = it.tarih; rec.company = it.firma; rec.plate = it.plaka; rec.paintDetails = it.aciklama;
+      rec.date = it.tarih; rec.company = it.firma; rec.plate = it.plaka; rec.paintDetails = it.aciklama; if (waMin(it.saat) != null) rec.waTime = String(it.saat).slice(0, 5);
       if (it.miktar !== '') { rec.tonnage = String(it.miktar); rec.tonnageUnit = it.birim || 'kg'; }
       await dbPut(rec); if (supabaseClient) cloudPushShipment(rec).catch(() => {});
       rec._searchIdx = computeSearchIndex(rec); state.shipments.unshift(rec); ok++;
@@ -5214,7 +5218,7 @@ function render() {
 /* ============================== işlem geçmişi + eski haline döndürme ============================== */
 const LOG_KEY = 'sevkiyat_islem_gecmisi', LOG_MAX = 300;
 const LOG_LABELS = { company: 'Firma', date: 'Tarih', plate: 'Plaka', driver: 'Şoför', driverPhone: 'Şoför tel', driverTC: 'Şoför TC', paintDetails: 'Boya detayı', tonnage: 'Miktar', tonnageUnit: 'Birim', unitPrice: 'Birim fiyat', invoiced: 'Fatura', paintCost: 'Boya maliyeti', astarUsed: 'Astar', topcoatUsed: 'Son kat', thinnerUsed: 'Tiner', ralCode: 'RAL', work: 'İş', paintThickness: 'Kalınlık', price: 'Fiyat', status: 'Durum', notes: 'Not' };
-const LOG_SKIP = { updatedAt: 1, createdAt: 1, _searchIdx: 1, photos: 1, signature: 1, media: 1, deletedAt: 1, id: 1, seq: 1 };
+const LOG_SKIP = { waTime: 1, updatedAt: 1, createdAt: 1, _searchIdx: 1, photos: 1, signature: 1, media: 1, deletedAt: 1, id: 1, seq: 1 };
 const _logShadow = new Map();
 let _logNote = '';
 function logTracked(r) { const o = {}; Object.keys(r || {}).forEach((k) => { if (!LOG_SKIP[k] && typeof r[k] !== 'function') o[k] = r[k]; }); return o; }
