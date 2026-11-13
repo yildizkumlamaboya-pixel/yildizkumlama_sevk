@@ -1783,7 +1783,7 @@ async function waAnalyze() {
     const d = res && res.data;
     if (res.error || !d) throw new Error('Okunamadı, tekrar dene.');
     if (d.err) throw new Error(d.err);
-    const items = (d.kayitlar || []).map((x) => ({ tarih: /^\d{4}-\d{2}-\d{2}$/.test(x.tarih || '') ? x.tarih : todayISO(), saat: x.saat || '', firma: String(x.firma || '').trim().toLocaleUpperCase('tr-TR'), plaka: String(x.plaka || '').trim().toLocaleUpperCase('tr-TR'), miktar: x.miktar == null || x.miktar === '' ? '' : x.miktar, birim: ['kg', 'ton', 'm2', 'adet'].indexOf(x.birim) >= 0 ? x.birim : 'kg', aciklama: String(x.aciklama || '').trim().toLocaleUpperCase('tr-TR'), not: x.not || '' })).filter((x) => x.firma);
+    const items = (d.kayitlar || []).map((x) => ({ tarih: /^\d{4}-\d{2}-\d{2}$/.test(x.tarih || '') ? x.tarih : todayISO(), saat: x.saat || '', firma: String(x.firma || '').trim().toLocaleUpperCase('tr-TR'), plaka: String(x.plaka || '').trim().toLocaleUpperCase('tr-TR'), miktar: (parseFloat(String(x.miktar).replace(',', '.')) > 0) ? parseFloat(String(x.miktar).replace(',', '.')) : '', birim: ['kg', 'ton', 'm2', 'adet'].indexOf(x.birim) >= 0 ? x.birim : 'kg', aciklama: String(x.aciklama || '').trim().toLocaleUpperCase('tr-TR'), not: x.not || '' })).filter((x) => x.firma);
     items.forEach((it) => { it.dup = waIsDup(it, items.filter((o) => o !== it && items.indexOf(o) < items.indexOf(it))); it.sel = !it.dup; });
     W.items = items; W.msg = d.mesaj || ''; W.step = 'review';
   } catch (e) { W.err = (e && e.message) || 'Okunamadı.'; }
