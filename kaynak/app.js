@@ -1782,7 +1782,7 @@ async function waAnalyze() {
     const res = await supabaseClient.functions.invoke('ai-whatsapp', { body: { gorseller: imgs, metin: W.text, bugun: todayISO(), firmalar: companies } });
     const d = res && res.data;
     if (res.error || !d) throw new Error('Okunamadı, tekrar dene.');
-    if (d.err) throw new Error(d.err + (d.detay ? ' · ' + JSON.stringify(d.detay).slice(0, 100) : ''));
+    if (d.err) throw new Error(d.err);
     const items = (d.kayitlar || []).map((x) => ({ tarih: /^\d{4}-\d{2}-\d{2}$/.test(x.tarih || '') ? x.tarih : todayISO(), saat: x.saat || '', firma: String(x.firma || '').trim().toLocaleUpperCase('tr-TR'), plaka: String(x.plaka || '').trim().toLocaleUpperCase('tr-TR'), miktar: x.miktar == null || x.miktar === '' ? '' : x.miktar, birim: ['kg', 'ton', 'm2', 'adet'].indexOf(x.birim) >= 0 ? x.birim : 'kg', aciklama: String(x.aciklama || '').trim().toLocaleUpperCase('tr-TR'), not: x.not || '' })).filter((x) => x.firma);
     items.forEach((it) => { it.dup = waIsDup(it, items.filter((o) => o !== it && items.indexOf(o) < items.indexOf(it))); it.sel = !it.dup; });
     W.items = items; W.msg = d.mesaj || ''; W.step = 'review';
@@ -1997,7 +1997,7 @@ async function askAssistant(text, fromVoice) {
     const d = res && res.data;
     if (audio) { text = (d && d.duyulan) ? String(d.duyulan).trim() : ''; myMsg.t = text ? '🎤 ' + text : '🎤 (ses)'; }
     if (res.error || !d) throw new Error('Asistan şu an cevap veremedi.');
-    if (d.err) throw new Error(d.err + (d.detay ? ' · ' + (typeof d.detay === 'string' ? d.detay : JSON.stringify(d.detay).slice(0, 120)) : ''));
+    if (d.err) throw new Error(d.err); // teknik ayrıntı gösterilmez
     reply = d.cevap || d.mesaj || 'Anlayamadım, biraz daha açık yazar mısın?';
     state.assistantMeta = ((Date.now() - tStart) / 1000).toFixed(1) + ' sn' + (d.ms ? ' (yapay zeka ' + (d.ms / 1000).toFixed(1) + ' sn)' : '');
     if (d.islem === 'uygula' && Array.isArray(d.islemler) && d.islemler.length) {
