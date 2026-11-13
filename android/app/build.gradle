@@ -2,6 +2,10 @@ plugins { id 'com.android.application' }
 
 def buildNo = (System.getenv('BUILD_NUMBER') ?: '1').toInteger()
 def ciKs = file('../ci.keystore')
+// Kalıcı imza: GitHub Secrets'ta ANDROID_KEYSTORE_BASE64 + ANDROID_KEYSTORE_PASSWORD varsa o kullanılır
+def ksFile = file('../release.jks')
+def ksPass = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+def useRelease = ksPass && ksFile.exists()
 
 android {
     namespace 'com.yildiz.sevkiyat'
@@ -20,11 +24,19 @@ android {
             keyAlias 'ci'
             keyPassword 'android'
         }
+        release {
+            if (useRelease) {
+                storeFile ksFile
+                storePassword ksPass
+                keyAlias 'notasistani'
+                keyPassword ksPass
+            }
+        }
     }
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig ciKs.exists() ? signingConfigs.ci : signingConfigs.debug
+            signingConfig useRelease ? signingConfigs.release : (ciKs.exists() ? signingConfigs.ci : signingConfigs.debug)
         }
     }
     lint {
